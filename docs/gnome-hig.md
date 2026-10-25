@@ -4,10 +4,15 @@
 es requisito del proyecto, no una aspiración estética. La aplicación es nativa:
 **Vala + GTK 4 + libadwaita** (GStreamer para audio). Usar ese stack o tener tests
 verdes no certifica HIG. Merge y release quedan bloqueados mientras haya
-desviaciones aplicables o verificaciones HIG pendientes. El
-[run CI 40237594338](https://github.com/gstn-caruso/gtkPlayer/actions/runs/40237594338)
-terminó verde para `a9202982ddc49f515aafe257805b27b607f8cdad` (26 tests: 11 core
-y 15 UI); no cubre los cambios locales posteriores sin commit ni aprueba HIG.
+desviaciones aplicables o verificaciones HIG pendientes, salvo la
+[excepción puntual autorizada para el bootstrap inicial y su prerelease](branches-and-releases.md#excepción-puntual-autorizada-y-plan-pendiente).
+No cambia este estado ni los requisitos de las siguientes integraciones.
+Al corte del **2026-10-25, previo a la primera integración**, el
+[run CI 40239813173](https://github.com/gstn-caruso/gtkPlayer/actions/runs/40239813173)
+terminó **SUCCESS** para `7114a837e47d2e1cb42a4ee5f68481f497304c2b`, ya publicado
+(32 tests: 11 core y 21 UI; build/paquete exitoso, release omitido).
+No aprueba HIG ni cubre el futuro commit documental; `main` y el prerelease
+siguen pendientes en ese corte.
 
 ## Alcance y evidencia
 
@@ -17,16 +22,18 @@ oficiales enlazadas con código y tests; no se ejecutaron pruebas interactivas n
 se reejecutó la suite en esta revisión. No es una auditoría completa.
 
 Incremento acotado posterior, al **2026-10-25**, en `feat/ci-hig-readiness`,
-árbol local **sin commit** sobre `a920298`: el coordinador reportó compilación y
+cambios inicialmente locales sobre `a920298`, ahora publicados en `7114a83`:
+el coordinador reportó compilación y
 32 tests verdes (11 core y 21 UI) con GTK 4.22.4/libadwaita 1.9.1, fixtures
 locales, GIO local, Xvfb y `fakesink`; los 21 UI también pasaron en claro y oscuro.
 Evidencia local ignorada en `build/hig-trace.md` y `build/hig-*.log`, con baseline
 de 26 casos y cuatro rojos de comportamiento observados. La revisión independiente
 por lectura, sin ejecutar tests, detectó los dos defectos P2 consignados en la
 fila de estados vacíos: las tres brechas intervenidas no están plenamente cerradas.
-Los 32 tests no cubren esos dos escenarios. Falta CI remoto del árbol posterior
-y auditoría interactiva: **NO APROBADO** permanece. Esta actualización documental
-no reejecutó las pruebas ni reanudó la implementación detenida.
+Los 32 tests no cubren esos dos escenarios. El CI remoto citado ya cubre ese
+código; falta auditoría interactiva: **NO APROBADO** permanece. Esta actualización
+documental no reejecutó las pruebas, consultó la API remota ni reanudó la
+implementación detenida.
 
 Aplicar cada directriz con sus cuantificadores: «todas las apps», «la mayoría»,
 «si existe este patrón» no son equivalentes. No hay que incorporar todos los
@@ -54,7 +61,7 @@ regresión cuando sea automatizable.
 | [Teclado][keyboard] y [ventanas][windows] | **Pendiente**, con cobertura parcial: `/ui/footer-keyboard-playback` en `tests/ui-tests.vala` comprueba foco/activación programáticos del footer. No demuestra recorrido completo. | Usar solo teclado: biblioteca, pistas, Datos/Cola, separadores, Preferencias, selector de carpeta y errores; comprobar orden/visibilidad de foco, Ctrl+W y Esc en modal. Pueden ser heredados: no asumir ausencia por falta de código explícito. |
 | [Nombres accesibles][names] | **Pendiente.** Hay etiquetas/tooltips en `src/window.vala`; GTK aporta algunos nombres por defecto. La ausencia de asignaciones explícitas no prueba que todos falten. | Inspeccionar árbol de accesibilidad y usar lector: nombres descriptivos de todos los elementos, listas, escalas y estados Play/Pausa. No certificar con `GTK_A11Y=none`. |
 | [Pruebas de accesibilidad][a11y-tests] | **Pendiente.** `meson.build` usa Xvfb y `GTK_A11Y=none`; `tests/ui-tests.vala` usa `fakesink`. Claro/oscuro no cubre accesibilidad integral. | Sesión real con alto contraste, texto grande, teclado, lector y teclado en pantalla para todas las entradas. Registrar tareas completables y cualquier recorte, foco perdido o control sin anunciar. |
-| [Redacción][writing] y [estados vacíos][empty] | **Cubierto por código/test, parcial.** `load_library`/`show_tracks`: singular/plural castellano para carga, omisión y selección. `/ui/no-status-row-summary-in-preferences`, `/ui/plural-library-and-selection-summary` y `/ui/empty-library-queue-and-load-failure-guidance` cubren 0/1/2, álbum/selección, resumen central vacío con guía a Preferencias y placeholder simbólico nativo de cola con guía contextual. El test distingue inicialmente vacío válido y fallo; `/ui/unavailable-location-and-recovery` conserva la biblioteca previa y el aviso genérico con detalle en Preferencias. Sin fila de estado superior. **Dos defectos P2 pendientes**, detectados por revisión independiente por lectura el 2026-10-25 sobre el árbol local sin commit basado en `a920298`: (1) cancelar la carga automática inicial sin biblioteca detiene el spinner, pero deja «Leyendo biblioteca…» y la promesa de contenido; (2) tras fallar esa carga sin biblioteca, cambiar la agrupación llama a `show_tracks` vacío y reemplaza el error por «Biblioteca vacía» sin haber cargado con éxito; durante la carga también anuncia vacío prematuramente. | Añadir regresiones: (1) iniciar sin biblioteca, cancelar la carga automática y comprobar estado de cancelación coherente, sin promesa de carga activa; (2) fallar la carga inicial, cambiar la agrupación y comprobar que persiste el estado de error, no un vacío válido; cambiarla también durante la carga y comprobar que conserva el estado de carga hasta concluir. Resolver ambos antes de cerrar esta brecha; los 32 tests verdes actuales no los cubren. Revisar legibilidad, adaptación y anuncio de las guías con texto grande/lector y comprobar las tareas en una sesión real. No se cambió toda la redacción ni se afirma cobertura completa de mensajes; HIG no obliga a cambiar la app a inglés. |
+| [Redacción][writing] y [estados vacíos][empty] | **Cubierto por código/test, parcial.** `load_library`/`show_tracks`: singular/plural castellano para carga, omisión y selección. `/ui/no-status-row-summary-in-preferences`, `/ui/plural-library-and-selection-summary` y `/ui/empty-library-queue-and-load-failure-guidance` cubren 0/1/2, álbum/selección, resumen central vacío con guía a Preferencias y placeholder simbólico nativo de cola con guía contextual. El test distingue inicialmente vacío válido y fallo; `/ui/unavailable-location-and-recovery` conserva la biblioteca previa y el aviso genérico con detalle en Preferencias. Sin fila de estado superior. **Dos defectos P2 pendientes**, detectados por revisión independiente por lectura el 2026-10-25 sobre los cambios basados en `a920298`, ahora publicados en `7114a83`: (1) cancelar la carga automática inicial sin biblioteca detiene el spinner, pero deja «Leyendo biblioteca…» y la promesa de contenido; (2) tras fallar esa carga sin biblioteca, cambiar la agrupación llama a `show_tracks` vacío y reemplaza el error por «Biblioteca vacía» sin haber cargado con éxito; durante la carga también anuncia vacío prematuramente. | Añadir regresiones: (1) iniciar sin biblioteca, cancelar la carga automática y comprobar estado de cancelación coherente, sin promesa de carga activa; (2) fallar la carga inicial, cambiar la agrupación y comprobar que persiste el estado de error, no un vacío válido; cambiarla también durante la carga y comprobar que conserva el estado de carga hasta concluir. Resolver ambos antes de cerrar esta brecha; los 32 tests verdes actuales no los cubren. Revisar legibilidad, adaptación y anuncio de las guías con texto grande/lector y comprobar las tareas en una sesión real. No se cambió toda la redacción ni se afirma cobertura completa de mensajes; HIG no obliga a cambiar la app a inglés. |
 | [Nombre][naming] e [icono de app][icons] | **Desviación observada / decisión pendiente.** «GTK Player» usa el nombre de otro proyecto, que HIG recomienda evitar; no es una prohibición genérica de términos técnicos. `data/io.github.gtkplayer.Player.desktop` usa `audio-x-generic`; `meson.build` no instala iconos propios. | Usuario elige nombre visible e identidad; luego verificar icono propio y versión simbólica instalados. No cambiar por esto el repositorio `gtkPlayer`. La carátula genérica interna no es el icono de identidad y puede permanecer. |
 | [Menú principal][menus] | **Pendiente** decidir aplicabilidad: HIG dice que la mayoría de apps lo tienen. **No aplicable hoy:** reglas del icono de menú al botón engranaje actual, que abre Preferencias directamente en `src/window.vala`, no un menú. | Resolver convención sin inventar obligación universal. Si se incorpora menú principal, comprobar icono, etiqueta y elementos estándar, incluido Acerca de. |
 | [Avisos][toasts] y [actividad][spinners] | **Cubierto por código/test, parcial; pendiente uso real.** `src/window.vala`: aviso genérico y detalle en Preferencias, spinner detenido en `finally`. `tests/ui-tests.vala`: recuperación de carga y `/ui/playback-error-detail-in-preferences`. | Verificar que el aviso sea percibido con Preferencias modal, teclado y lector; repetir error tras expirar el aviso. Widget mapeado no prueba visibilidad. Medir carga lenta: no exigir porcentaje sin conocer progreso. |
@@ -68,19 +75,23 @@ esas medidas si perjudican legibilidad o accesibilidad. Tampoco hace falta
 implementar ahora persistencia del tamaño de ventana sin resolver si aplica
 la recomendación condicional de restaurar una vista o contenido.
 
-Antes de integrar: resolver las desviaciones, completar las comprobaciones
-aplicables y justificar las no aplicables; ampliar esta matriz si aparecen
-otras pautas relevantes. La revisión debe contrastar comportamiento, no marcar
-«usa GTK». Adjuntar evidencia automatizada y manual, sin sustituir una por otra.
-Además se exige CI verde según [ramas y releases](branches-and-releases.md),
-con verde remoto para `a920298`, pero pendiente para el árbol local posterior.
-Los artefactos CI no certifican HIG ni son paquetes finales aprobados para distribución. El push
-de fuente en una feature branch como trabajo en
-desarrollo, expresamente autorizado por el usuario, no significa aprobación
-HIG ni habilita integración o release. Nombre/icono requieren al usuario;
-licencia, titular y mantenedor siguen pendientes antes de publicar paquetes o
-releases. Este documento no autoriza operaciones remotas ni declara aprobación
-HIG.
+Regla general antes de integrar: resolver las desviaciones, completar las
+comprobaciones aplicables y justificar las no aplicables; ampliar esta matriz
+si aparecen otras pautas relevantes. La revisión debe contrastar comportamiento,
+no marcar «usa GTK». Adjuntar evidencia automatizada y manual, sin sustituir
+una por otra. Además se exige CI verde según
+[ramas y releases](branches-and-releases.md): hay verde remoto de `7114a83`,
+pero el futuro commit documental deberá obtener el suyo antes del bootstrap.
+
+La excepción autorizada abarca solo la integración inicial de ese código más
+este registro documental y su prerelease experimental con metadatos
+provisionales. No cierra los dos P2 ni los pendientes de adaptación,
+teclado/accesibilidad, identidad o licencia. Nombre/icono, titular y contacto
+requieren decisión del usuario; publicar no concede permisos de redistribución.
+Los artefactos CI no certifican HIG ni son paquetes finales aprobados para
+distribución estable. Este documento registra la excepción, no ejecuta
+operaciones remotas ni declara aprobación HIG; las próximas integraciones
+conservan los gates generales.
 
 [hig]: https://developer.gnome.org/hig/index.html
 [header]: https://developer.gnome.org/hig/patterns/containers/header-bars.html

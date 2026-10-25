@@ -12,10 +12,15 @@ La aplicación debe cumplir las [GNOME Human Interface Guidelines](https://devel
 según las directrices aplicables a su alcance. El stack Vala + GTK 4 + libadwaita
 no demuestra por sí solo ese cumplimiento. **Estado: NO APROBADO**; hay
 desviaciones y comprobaciones pendientes en la [matriz HIG](docs/gnome-hig.md).
-Merge y release quedan bloqueados hasta resolverlas y contar con CI verde del
-árbol a integrar. El [run CI 40237594338](https://github.com/gstn-caruso/gtkPlayer/actions/runs/40237594338)
-terminó verde para `a9202982ddc49f515aafe257805b27b607f8cdad` (26 tests), no
-para los cambios locales posteriores sin commit, cuyo CI remoto sigue pendiente.
+La regla general bloquea merge y release hasta resolverlas y contar con CI
+verde del árbol a integrar. El usuario autorizó una
+[excepción puntual de bootstrap y prerelease experimental](docs/branches-and-releases.md#excepción-puntual-autorizada-y-plan-pendiente),
+no una aprobación HIG. Al corte del **2026-10-25, previo a la primera integración**,
+el [run CI 40239813173](https://github.com/gstn-caruso/gtkPlayer/actions/runs/40239813173)
+terminó **SUCCESS** para el código ya publicado
+`7114a837e47d2e1cb42a4ee5f68481f497304c2b` (32 tests: 11 core y 21 UI;
+build/paquete exitoso, release omitido). El futuro commit documental aún necesita
+su propio CI verde; integración y prerelease no están ejecutados en ese corte.
 Ver también [las instrucciones del proyecto](AGENTS.md).
 
 ## Usar la biblioteca
@@ -50,7 +55,7 @@ con el teclado. Una entrada de Cola se activa de la misma forma. La biblioteca
 vacía orienta a elegir una ubicación con música en Preferencias y la cola vacía
 explica cómo crearla. Un fallo de carga sin biblioteca tiene un mensaje distinto,
 además del aviso y su detalle en Preferencias. Quedan dos defectos conocidos en
-el árbol local: cancelar la carga inicial sin biblioteca deja «Leyendo biblioteca…»
+el código publicado en `7114a83`: cancelar la carga inicial sin biblioteca deja «Leyendo biblioteca…»
 y cambiar la agrupación tras un fallo sin biblioteca sustituye el error por un
 vacío válido (también puede anunciarlo durante la carga). Ver la [matriz HIG](docs/gnome-hig.md).
 Los conteos distinguen singular y plural, por ejemplo «1 pista cargada · 1 archivo de audio omitido».
@@ -262,30 +267,38 @@ Lintian informó `copyright-without-copyright-notice` (titular pendiente) y
   `debian/copyright` no concede permisos y `debian/control` usa un contacto
   placeholder explícito. La publicación de fuente en desarrollo autorizada por
   el usuario no implica una licencia open-source ni concede permisos de
-  redistribución a terceros. No publicar paquetes ni releases hasta resolverlos.
+  redistribución a terceros. La excepción puntual permite solo el prerelease
+  experimental autorizado con metadatos provisionales, sin resolver estos datos
+  ni aprobar distribución estable; fuera de ella no publicar hasta resolverlos.
 
 ## Ramas y releases
 
 Ver [la guía de contribución e integración](docs/branches-and-releases.md).
 El repositorio [gstn-caruso/gtkPlayer](https://github.com/gstn-caruso/gtkPlayer)
-es público y tiene `origin` configurado. La fuente es trabajo en desarrollo:
-el usuario autorizó su push en una feature branch, lo que no significa aprobación
-HIG ni un release. La integración a `main` y los releases siguen bloqueados por
-HIG no aprobado; licencia, titular y mantenedor siguen pendientes. El CI verde
-de `a920298` no cubre el árbol local posterior: se reportaron 32 tests locales
-verdes (11 core y 21 UI), pero falta su CI remoto y la cobertura de los dos defectos
-anteriores. El run citado construyó el `.deb` de prueba
-`gtkplayer_0.1.0+git1.a9202982ddc4_amd64.deb`; el coordinador verificó su checksum
-y metadata tras descargar el artefacto. No se instaló ni se publicó un release;
-el job `release` quedó omitido por ser feature branch. El [workflow](.github/workflows/ci.yml) construye y prueba sobre
-Ubuntu 24.04 amd64 (GTK 4.14/libadwaita 1.5), sin demostrar las versiones mínimas
-absolutas ni compatibilidad universal. En `feat/**`, `fix/**` y PR hacia `main`
-solo adjunta `.deb` de prueba y SHA-256 como artefacto CI, no release final.
-Tras cerrar los gates humanos, cada push a `main` con build verde está previsto
-que publique un prerelease `v0.1.0+git<RUN_NUMBER>.<SHA12>` del SHA integrado, sin
-sobrescribir assets en reintentos. Solo se modifica el changelog de la copia CI;
-el paquete sigue siendo dinámico, sin runtime incluido. No hay protección de
-rama configurada y todavía no se verificaron publicación remota ni idempotencia
-de release. Los permisos,
-reintentos, retención y requisitos de integración están en
+es público y tiene `origin` configurado. Al corte previo a la primera integración
+(2026-10-25), `feat/ci-hig-readiness` tiene publicado `7114a83`, con el CI verde
+citado arriba y 32 tests locales verdes reportados; no cubren los dos defectos P2.
+El [run anterior de 26 tests](https://github.com/gstn-caruso/gtkPlayer/actions/runs/40237594338)
+para `a920298` es evidencia histórica, no el CI actual. No se instaló el paquete.
+
+El usuario autorizó **solo la integración inicial de `7114a83` más este registro
+documental y su prerelease experimental con metadatos provisionales**, manteniendo
+HIG no aprobado e identidad/licencia/titular/contacto pendientes. El plan aún no
+ejecutado al corte es hacer commit/push documental, esperar CI verde de ese SHA
+y crear/publicar `main` desde ese HEAD: no existe `main` local/remoto en ese corte,
+por lo que es un bootstrap sin PR de destino ni merge commit fabricado. Las
+siguientes integraciones requieren encargo y el flujo normal PR/revisión/HIG/CI.
+
+El [workflow](.github/workflows/ci.yml) construye y prueba sobre Ubuntu 24.04 amd64
+(GTK 4.14/libadwaita 1.5), sin demostrar las versiones mínimas absolutas ni
+compatibilidad universal. En `feat/**`, `fix/**` y PR hacia `main` solo adjunta
+`.deb` de prueba y SHA-256 como artefacto CI. El push autorizado a `main` deberá
+pasar build/tests/paquete antes de publicar su prerelease
+`v0.1.0+git<RUN_NUMBER>.<SHA12>` del SHA integrado. Después se comprobarán tag,
+SHA, assets y checksums; al corte no hay integración ni release ejecutados, ni
+publicación o idempotencia remota verificadas. El mecanismo prevé no sobrescribir
+assets en reintentos, pero eso no demuestra su ejecución real. Solo se modifica
+el changelog de la copia CI; el paquete sigue siendo dinámico, sin runtime
+incluido. No hay protección de rama configurada. Los permisos, reintentos,
+retención, excepción y requisitos de integración están en
 [ramas y releases](docs/branches-and-releases.md).

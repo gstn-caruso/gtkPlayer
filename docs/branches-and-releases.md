@@ -2,6 +2,10 @@
 
 ## Política acordada
 
+Regla general; la única excepción autorizada para el bootstrap inicial se
+registra abajo. No constituye aprobación HIG ni cambia esta política para
+integraciones posteriores.
+
 1. Trabajar en una rama `feat/<tema>` por funcionalidad; no desarrollar directo
    en `main`. Para correcciones se puede usar `fix/<tema>`. Un escritor por
    worktree cuando haya trabajo concurrente.
@@ -23,39 +27,59 @@
    expresamente autorizado por el usuario, no equivale a integración, aprobación
    HIG o release y no elimina esos requisitos.
 
-## Estado actual
+## Corte previo a la primera integración — 2026-10-25
 
-La configuración está publicada en `feat/ci-hig-readiness`, HEAD `a920298`, sin
-integrar las ramas de desarrollo a `main`. No existe `main` aún. El repositorio
+Evidencia reportada por el coordinador: el código está publicado en
+`feat/ci-hig-readiness`, HEAD `7114a837e47d2e1cb42a4ee5f68481f497304c2b`.
+En este corte no existe `main` local/remoto; la rama predeterminada remota es
+`feat/library-preferences`. El repositorio
 [gstn-caruso/gtkPlayer](https://github.com/gstn-caruso/gtkPlayer) es **público**, con
-`origin` en `https://github.com/gstn-caruso/gtkPlayer.git`. El usuario autorizó el
-push de fuente en feature branches como trabajo en desarrollo, sin aprobar HIG
-ni resolver las decisiones de identidad y licencia.
+`origin` en `https://github.com/gstn-caruso/gtkPlayer.git`.
 
-El [workflow](../.github/workflows/ci.yml) tiene un run remoto **SUCCESS**:
-[40237594338](https://github.com/gstn-caruso/gtkPlayer/actions/runs/40237594338),
-SHA `a9202982ddc49f515aafe257805b27b607f8cdad`, Ubuntu 24.04 amd64, 26 tests
-(11 core y 15 UI). El job `release` quedó **SKIPPED** por ser feature branch.
-Evidencia del coordinador al 2026-10-25: artefacto `ubuntu-24.04-amd64-deb`
-(ZIP de 30096 bytes), descargado y verificado contra `SHA256SUMS`; paquete
-`gtkplayer`, versión `0.1.0+git1.a9202982ddc4`, arquitectura `amd64`.
-La copia temporal está en
-`/tmp/gtkplayer-ci-artifact.9rOsKB/gtkplayer_0.1.0+git1.a9202982ddc4_amd64.deb`;
-no es un enlace permanente de release. No se instaló el paquete ni se publicaron
-releases o tags. El enlace al run es la referencia oficial.
+El [workflow](../.github/workflows/ci.yml) tiene **SUCCESS** en el
+[run 40239813173](https://github.com/gstn-caruso/gtkPlayer/actions/runs/40239813173)
+para ese SHA: build/tests/paquete exitosos sobre Ubuntu 24.04 amd64, 32 tests
+(11 core y 21 UI); `release` **SKIPPED** por ser feature branch. La última suite
+local reportada también tiene 32 tests verdes. El
+[run 40237594338](https://github.com/gstn-caruso/gtkPlayer/actions/runs/40237594338)
+para `a9202982ddc49f515aafe257805b27b607f8cdad` (26 tests) es evidencia histórica,
+no el CI actual. Su artefacto de prueba fue descargado y contrastado con
+`SHA256SUMS` por el coordinador; eso no verifica los assets de un futuro release.
+Esta actualización documental no reejecutó tests ni consultó la API remota.
 
-Los cambios UI locales posteriores, sin commit sobre ese SHA, tienen 32 tests
-verdes reportados (11 core y 21 UI), pero **no CI remoto** y dos defectos de
-estados vacíos pendientes en la [matriz HIG](gnome-hig.md). No se configuró branch
-protection. La integración y publicación siguen bloqueadas:
-**HIG NO APROBADO, CI del árbol futuro pendiente, licencia/titular/mantenedor pendientes**.
-La publicación de fuente no implica licencia open-source ni concede permisos
-de redistribución. Los artefactos CI son paquetes de prueba, no paquetes finales
-aprobados para distribución.
+**HIG NO APROBADO:** siguen los dos defectos P2 de estados vacíos, adaptación,
+teclado/accesibilidad y decisiones de identidad en la [matriz HIG](gnome-hig.md).
+Licencia, titular y contacto del mantenedor siguen pendientes. No hay branch
+protection configurada. Publicar fuente o un prerelease no concede licencia
+open-source ni permisos de redistribución a terceros, ni aprueba distribución
+estable.
 
-Esta guía no ejecuta ni autoriza commits, push, merges, creación de remotos,
-publicaciones ni cambios de servicios. Cada operación remota necesita el
-encargo y autorización correspondientes.
+## Excepción puntual autorizada y plan pendiente
+
+El usuario confirmó «si» a «¿Confirmás que integre este estado en main y permita
+el prerelease automático, como excepción al bloqueo por HIG pendiente? No lo
+presentaré como conforme a HIG.», tras pedir «merge comit push».
+La autorización abarca **solo la integración inicial de `feat/ci-hig-readiness`:
+código `7114a83` más este registro documental, y su prerelease experimental con
+metadatos provisionales**. No decide nombre/icono, licencia, copyright/titular ni
+contacto, ni levanta globalmente los gates humanos. No se presenta como conforme
+a HIG ni como distribución estable.
+
+Plan del coordinador, **aún no ejecutado en este corte**:
+
+1. Hacer commit de este registro documental y push a la feature branch; esperar
+   **CI verde de ese SHA exacto**, no reutilizar el verde de `7114a83`.
+2. Crear `main` desde ese HEAD ya verde y publicarla. Es un bootstrap puntual:
+   al corte no hay `main` ni destino posible de PR; no fabricar un merge commit.
+3. El push a `main` disparará build/tests/paquete y, solo con build verde, el
+   prerelease automático. Comprobar después el resultado real, tag, SHA objetivo,
+   assets y checksums. Publicación e idempotencia remota aún no están verificadas.
+
+CI sigue siendo obligatorio incluso en esta excepción. Las próximas
+integraciones vuelven al flujo PR, revisión, HIG y CI de la política general y
+requieren encargo; esta autorización no cubre nuevas operaciones ajenas al
+bootstrap. Esta guía registra el permiso recibido, no ejecuta las operaciones
+ni autoriza instalaciones o cambios de servicios.
 
 ## Workflow de build y paquete
 
@@ -121,10 +145,12 @@ No se firman paquetes ni se promete firma de checksums.
 ## Gate humano y primera comprobación remota
 
 **El workflow no certifica ni aprueba HIG, licencia o identidad.** Son requisitos
-previos a permitir integrar `main`, no flags que un test pueda inventar. La
+previos a permitir integrar `main`, no flags que un test pueda inventar, salvo
+la excepción puntual de bootstrap registrada arriba, que no los resuelve. La
 revisión debe aportar fuentes, escenarios, entorno, resultados y límites,
-actualizar la matriz HIG y justificar lo no aplicable. No crear/integrar `main`
-ni publicar mientras queden desviaciones o comprobaciones aplicables pendientes.
+actualizar la matriz HIG y justificar lo no aplicable. Fuera de esa excepción,
+no crear/integrar `main` ni publicar mientras queden desviaciones o comprobaciones
+aplicables pendientes.
 
 La protección de `main` (PR obligatorio, revisión y checks requeridos del
 pipeline real) sigue sin configurar y requiere autorización específica. Esta
@@ -132,12 +158,10 @@ política documentada no la impone técnicamente. Si se omite el gate y se hace
 push a `main`, el workflow intentaría publicar tras el build verde: no usar eso
 como atajo para decisiones humanas pendientes.
 
-Próxima comprobación: resolver los pendientes HIG y probar el árbol posterior
-en CI mediante un push expresamente autorizado. El primer run ya confirmó
-build/tests/metadata/artefacto y ausencia de release para `a920298`, no para los
-cambios locales. Solo después de cerrar HIG, licencia/titular/mantenedor y
-permisos, realizar una integración controlada y comprobar tag, SHA objetivo,
-assets/checksums y reintento sin reemplazos. La lógica del job `release` fue
-revisada por lectura, pero no ejecutada: ni el verde de feature branch ni las
-comprobaciones locales demuestran publicación remota o idempotencia real de
-la API de GitHub.
+Próxima comprobación del bootstrap autorizado: CI verde del commit documental
+y luego el run de `main` y los datos del prerelease según el plan anterior.
+Los pendientes HIG y licencia/titular/mantenedor permanecen abiertos para las
+siguientes integraciones. La lógica del job `release` fue revisada por lectura,
+pero al corte no ejecutada: ni el verde de feature branch ni las comprobaciones
+locales demuestran publicación remota o idempotencia real de la API de GitHub;
+el reintento sin reemplazos tampoco se da por verificado.
