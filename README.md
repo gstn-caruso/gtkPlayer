@@ -13,7 +13,8 @@ según las directrices aplicables a su alcance. El stack Vala + GTK 4 + libadwai
 no demuestra por sí solo ese cumplimiento. **Estado: NO APROBADO**; hay
 desviaciones y comprobaciones pendientes en la [matriz HIG](docs/gnome-hig.md).
 Merge y release quedan bloqueados hasta resolverlas y contar con CI verde real;
-CI aún no está configurado. Ver también [las instrucciones del proyecto](AGENTS.md).
+el [workflow](.github/workflows/ci.yml) se añadió localmente, con ejecución remota
+pendiente (no se afirma CI verde). Ver también [las instrucciones del proyecto](AGENTS.md).
 
 ## Usar la biblioteca
 
@@ -249,6 +250,15 @@ El repositorio [gstn-caruso/gtkPlayer](https://github.com/gstn-caruso/gtkPlayer)
 es público y tiene `origin` configurado. La fuente es trabajo en desarrollo:
 el usuario autorizó su push en una feature branch, lo que no significa aprobación
 HIG ni un release. La integración a `main` y los releases siguen bloqueados por
-HIG no aprobado y CI ausente; licencia, titular y mantenedor siguen pendientes.
-La construcción local está disponible, pero no hay workflow ni protección de
-rama configurados, ni se afirma que un merge produzca ya un release.
+HIG no aprobado y CI remoto pendiente; licencia, titular y mantenedor siguen
+pendientes. El [workflow](.github/workflows/ci.yml) construye y prueba sobre
+Ubuntu 24.04 amd64 (GTK 4.14/libadwaita 1.5), sin demostrar las versiones mínimas
+absolutas ni compatibilidad universal. En `feat/**`, `fix/**` y PR hacia `main`
+solo adjunta `.deb` de prueba y SHA-256 como artefacto CI, no release final.
+Tras cerrar los gates humanos, cada push a `main` con build verde está previsto
+que publique un prerelease `v0.1.0+git<RUN_NUMBER>.<SHA12>` del SHA integrado, sin
+sobrescribir assets en reintentos. Solo se modifica el changelog de la copia CI;
+el paquete sigue siendo dinámico, sin runtime incluido. No hay protección de
+rama configurada y todavía no se verificó una publicación remota. Los permisos,
+reintentos, retención y requisitos de integración están en
+[ramas y releases](docs/branches-and-releases.md).

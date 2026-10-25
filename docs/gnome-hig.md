@@ -4,7 +4,8 @@
 es requisito del proyecto, no una aspiración estética. La aplicación es nativa:
 **Vala + GTK 4 + libadwaita** (GStreamer para audio). Usar ese stack o tener tests
 verdes no certifica HIG. Merge y release quedan bloqueados mientras haya
-desviaciones aplicables o verificaciones HIG pendientes; también falta CI real.
+desviaciones aplicables o verificaciones HIG pendientes; el workflow de CI se
+ha añadido localmente, pero su ejecución remota y verde real siguen pendientes.
 
 ## Alcance y evidencia
 
@@ -58,7 +59,9 @@ aplicables y justificar las no aplicables; ampliar esta matriz si aparecen
 otras pautas relevantes. La revisión debe contrastar comportamiento, no marcar
 «usa GTK». Adjuntar evidencia automatizada y manual, sin sustituir una por otra.
 Además se exige CI verde según [ramas y releases](branches-and-releases.md),
-aún sin configurar. El push de fuente en una feature branch como trabajo en
+con workflow añadido localmente y ejecución remota pendiente. Los artefactos CI
+no certifican HIG ni son paquetes finales aprobados para distribución. El push
+de fuente en una feature branch como trabajo en
 desarrollo, expresamente autorizado por el usuario, no significa aprobación
 HIG ni habilita integración o release. Nombre/icono requieren al usuario;
 licencia, titular y mantenedor siguen pendientes antes de publicar paquetes o

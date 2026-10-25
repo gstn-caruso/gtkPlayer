@@ -1,0 +1,156 @@
+name: Build, test and package
+
+'on':
+  push:
+    branches: ['feat/**', 'fix/**', main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# No concurrency group: every main push must retain its release opportunity.
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install build dependencies in disposable runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential valac meson ninja-build pkgconf \
+            libglib2.0-dev libgtk-4-dev libadwaita-1-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            ffmpeg xvfb xauth dbus-daemon debhelper dpkg-dev fakeroot \
+            desktop-file-utils rsync
+      - name: Derive traceable native Debian version
+        id: version
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          base=$(dpkg-parsechangelog -S Version)
+          version="${base}+git${RUN_NUMBER}.$(git rev-parse --short=12 HEAD)"
+          dpkg --validate-version "$version"
+          printf 'version=%s\ntag=v%s\n' "$version" "$version" >> "$GITHUB_OUTPUT"
+          printf 'SOURCE_DATE_EPOCH=%s\n' "$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      - name: Build, test, stage and inspect Debian package
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(dpkg --print-architecture)" = amd64
+          dpkg-checkbuilddeps
+          meson setup build --prefix=/usr
+          meson compile -C build
+          GIO_USE_VFS=local dbus-run-session -- meson test -C build --print-errorlogs
+          work=$(mktemp -d)
+          meson install -C build --destdir "$work/stage"
+          test -x "$work/stage/usr/bin/gtkplayer"
+          desktop-file-validate "$work/stage/usr/share/applications/io.github.gtkplayer.Player.desktop"
+          "$work/stage/usr/bin/gtkplayer" --help
+          mkdir "$work/source"
+          rsync -a --exclude=/.git/ --exclude=/build/ --exclude='/build-*/' \
+            --exclude=/dist/ --exclude='/obj-*/' ./ "$work/source/"
+          (
+            cd "$work/source"
+            # Prepend an entry only in this disposable copy; preserve the history
+            # and placeholder maintainer, with the commit date rather than wall time.
+            maintainer=$(dpkg-parsechangelog -S Maintainer)
+            cp debian/changelog "$work/changelog"
+            printf 'gtkplayer (%s) unstable; urgency=medium\n\n  * CI build; distribution rights remain pending.\n\n -- %s  %s\n\n' \
+              "$PACKAGE_VERSION" "$maintainer" "$(date -u -d "@$SOURCE_DATE_EPOCH" -R)" > debian/changelog
+            tee -a debian/changelog < "$work/changelog" > /dev/null
+            dpkg-buildpackage -us -uc -b
+          )
+          package="$work/gtkplayer_${PACKAGE_VERSION}_amd64.deb"
+          test "$(dpkg-deb -f "$package" Package)" = gtkplayer
+          test "$(dpkg-deb -f "$package" Version)" = "$PACKAGE_VERSION"
+          test "$(dpkg-deb -f "$package" Architecture)" = amd64
+          dpkg-deb --info "$package"
+          dpkg-deb --contents "$package"
+          dpkg-deb --extract "$package" "$work/unpacked"
+          test -x "$work/unpacked/usr/bin/gtkplayer"
+          desktop-file-validate "$work/unpacked/usr/share/applications/io.github.gtkplayer.Player.desktop"
+          "$work/unpacked/usr/bin/gtkplayer" --help
+          mkdir -p dist
+          cp "$package" dist/
+          (cd dist && sha256sum "gtkplayer_${PACKAGE_VERSION}_amd64.deb" > SHA256SUMS)
+          # Deliberately exclude dbgsym, logs (which may contain env), and Git metadata.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ubuntu-24.04-amd64-deb
+          path: |
+            dist/gtkplayer_*.deb
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  # Human HIG review and licensing decisions are prerequisites to merging main,
+  # not claims that this workflow can validate. Do not merge while unresolved.
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ubuntu-24.04-amd64-deb
+          path: dist
+      - name: Publish integration prerelease without replacing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TARGET_SHA: ${{ github.sha }}
+          PACKAGE_VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum --check SHA256SUMS
+          # matching-refs returns [] for an absent tag, but API errors still fail.
+          ref=$(gh api "repos/$GH_REPO/git/matching-refs/tags/$RELEASE_TAG" \
+            | jq -c --arg ref "refs/tags/$RELEASE_TAG" '.[] | select(.ref == $ref)')
+          if [ -n "$ref" ]; then
+            object_type=$(jq -r '.object.type' <<< "$ref")
+            object_sha=$(jq -r '.object.sha' <<< "$ref")
+            while [ "$object_type" = tag ]; do
+              object=$(gh api "repos/$GH_REPO/git/tags/$object_sha")
+              object_type=$(jq -r '.object.type' <<< "$object")
+              object_sha=$(jq -r '.object.sha' <<< "$object")
+            done
+            test "$object_type" = commit
+            test "$object_sha" = "$TARGET_SHA"
+          fi
+          # Query the release list rather than treating any API failure as absence.
+          release=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            | jq -c --arg tag "$RELEASE_TAG" '.[] | select(.tag_name == $tag)')
+          if [ -n "$release" ] && [ -z "$ref" ]; then
+            # A pre-existing draft may not have created its tag yet.
+            test "$(jq -r '.target_commitish' <<< "$release")" = "$TARGET_SHA"
+          fi
+          if [ -z "$release" ]; then
+            gh release create "$RELEASE_TAG" --target "$TARGET_SHA" --draft --prerelease \
+              --title "$RELEASE_TAG" \
+              --notes 'Integration build for Ubuntu 24.04 amd64 (dynamic linking, no bundled runtime). See repository documentation for scope and known limitations.'
+          fi
+          existing=$(mktemp -d)
+          for asset in "gtkplayer_${PACKAGE_VERSION}_amd64.deb" SHA256SUMS; do
+            assets=$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
+            if grep -Fxq "$asset" <<< "$assets"; then
+              gh release download "$RELEASE_TAG" --pattern "$asset" --dir "$existing"
+              cmp "$asset" "$existing/$asset"
+            else
+              gh release upload "$RELEASE_TAG" "$asset"
+            fi
+          done
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease

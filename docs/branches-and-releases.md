@@ -13,8 +13,8 @@
    desviaciones y comprobaciones HIG aplicables; los tests no sustituyen la
    auditoría manual. No ignorar fallos ni forzar push o saltar verificaciones.
 4. Cada integración a `main` deberá generar una versión única y construir un
-   `.deb` desde el commit integrado en un entorno limpio y fijo. El objetivo
-   es que cada merge a `main` dispare un release; **no está automatizado aún**.
+   `.deb` desde el commit integrado en un entorno limpio y fijo. El workflow
+   descrito abajo implementa el mecanismo; su ejecución remota está pendiente.
 5. Publicar paquetes y releases solo tras el verde de todas las comprobaciones
    y resolver licencia, titular y contacto del mantenedor. Un build fallido no
    puede producir un release público. No reutilizar una versión para binarios
@@ -24,56 +24,103 @@
 
 ## Estado actual
 
-El trabajo actual está en `feat/library-preferences`, base `df0d34d` y cambios
-locales sin integrar; también existe `feat/initial-player`. No existe `main` aún.
-El empaquetado local tiene versión `0.1.0`, fuente nativa y binarios de enlace
-dinámico. El repositorio [gstn-caruso/gtkPlayer](https://github.com/gstn-caruso/gtkPlayer)
-es **público**, con `origin` configurado en
-`https://github.com/gstn-caruso/gtkPlayer.git`. El usuario autorizó el push de
-fuente en la feature branch como trabajo en desarrollo, sin aprobar integración
-ni release. No hay workflow, CI, branch protection o release. La integración a
-`main` y los releases siguen bloqueados: **HIG NO APROBADO y CI ausente**;
-licencia, titular y mantenedor siguen pendientes. La publicación de esa fuente
-no implica una licencia open-source ni concede permisos de redistribución a
-terceros. El `.deb` local no demuestra ninguna automatización remota.
+La configuración se prepara en `feat/ci-hig-readiness`, desde `6afb904`, sin
+integrar las ramas de desarrollo a `main`. No existe `main` aún. El repositorio
+[gstn-caruso/gtkPlayer](https://github.com/gstn-caruso/gtkPlayer) es **público**, con
+`origin` en `https://github.com/gstn-caruso/gtkPlayer.git`. El usuario autorizó el
+push de fuente en feature branches como trabajo en desarrollo, sin aprobar HIG
+ni resolver las decisiones de identidad y licencia.
 
-La guía no ejecuta ni autoriza commits, push, merges, creación de remotos,
+Se añadió [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) localmente.
+**Ejecución remota pendiente: no se afirma CI verde.** No se configuraron branch
+protection ni releases. La integración y publicación siguen bloqueadas:
+**HIG NO APROBADO, CI remoto pendiente, licencia/titular/mantenedor pendientes**.
+La publicación de fuente no implica licencia open-source ni concede permisos
+de redistribución. Los artefactos CI son paquetes de prueba, no paquetes finales
+aprobados para distribución.
+
+Esta guía no ejecuta ni autoriza commits, push, merges, creación de remotos,
 publicaciones ni cambios de servicios. Cada operación remota necesita el
 encargo y autorización correspondientes.
 
-## Decisiones necesarias para implementar CI
+## Workflow de build y paquete
 
-- Confirmar la distribución/arquitecturas de construcción y soporte. El artefacto
-  actual usa las bibliotecas de Ubuntu 26.04.1 amd64; no incluye runtime.
-- Acordar versionado de integración. Propuesta pendiente: `0.1.0+git<N>.<SHA>`
-  con un contador monotónico de integraciones y SHA corto del commit. Es
-  compatible con el formato nativo sin guion; hace falta definir una fuente
-  estable del contador y cómo convive con versiones estables posteriores.
-  CI deberá actualizar `debian/changelog` en su copia de construcción, comprobar
-  la versión Debian y usarla en nombre de artefacto/release. No hay scripts que
-  implementen todavía esta propuesta.
-- Elegir release estable o prerelease por integración, política de retención,
-  checksums y firma. Confirmar permisos mínimos del token del servicio sin
-  almacenar secretos en Git ni archivos locales.
-- Resolver licencia, autor/titular y mantenedor real antes de publicar paquetes
-  o releases.
-- Autorizar y configurar protección de `main`: PR/MR obligatorio, revisión y
-  checks requeridos del pipeline real. Esta documentación sola no lo impone.
+- Eventos: `push` a `feat/**`, `fix/**` y `main`; `pull_request` hacia `main`.
+  No usa `pull_request_target` ni interpola títulos o refs de PR en shell.
+- Runner fijo `ubuntu-24.04`, amd64: GTK 4.14/libadwaita 1.5. Es la baseline
+  de construcción, no una prueba de las mínimas declaradas GTK 4.10/Adwaita 1.4.
+  Las actualizaciones de paquetes del runner pueden variar; no se promete
+  reproducibilidad bit a bit ni una imagen congelada por digest.
+- Instala dependencias solo en el runner desechable, con
+  `apt-get --no-install-recommends`; valida `Build-Depends` mediante
+  `dpkg-checkbuilddeps`. No instala el `.deb` construido.
+- Ejecuta Meson, tests core/UI (Xvfb, fakesink y entorno aislado definido en
+  Meson), instalación en DESTDIR y `desktop-file-validate`/`--help`.
+- Copia la fuente sin `.git`, `build`, `build-*`, `obj-*` ni `dist` a un árbol
+  temporal; allí ejecuta `dpkg-buildpackage -us -uc -b`. Debhelper vuelve a
+  ejecutar los tests; las dependencias enlazadas las calcula `dpkg-shlibdeps`.
+  Plugins GStreamer y GVfs SMB siguen siendo dependencias explícitas de control.
+- Inspecciona metadata y contenido del `.deb`, exige Package/Version/Architecture
+  esperados, extrae y valida `.desktop` y `--help`. Esto no prueba instalación,
+  reproducción real, SMB ni accesibilidad integral.
+- Sube exclusivamente `.deb` principal y `SHA256SUMS`, como artefacto
+  `ubuntu-24.04-amd64-deb`, retenido 14 días. No sube dbgsym, logs Meson (pueden
+  contener entorno heredado), credenciales ni metadata Git.
 
-## Contrato de aceptación del pipeline futuro
+El paquete es **dinámico para Ubuntu 24.04 amd64**, sin runtime universal. Una
+construcción local en otra distribución no verifica ese destino; el primer run
+remoto debe comprobarlo. Los avisos de licencia y mantenedor pendientes se
+conservan en el paquete.
 
-Sobre cada PR/MR: exigir evidencia HIG aplicable (fuente, escenarios, entorno,
-resultado y límites) y actualizar la matriz. Bloquear ante desviaciones o
-verificaciones pendientes; un caso no aplicable requiere justificación. Compilar
-y ejecutar `meson test` con los backends definidos en Meson; construir el Debian
-sin privilegios; validar `.desktop`, metadata, contenido y `--help` del binario
-extraído. Conservar logs de fallos, no publicar. Los checks de CI no certifican
-por sí solos teclado real, nombres accesibles ni accesibilidad integral.
+## Versionado y publicación de integraciones
 
-Sobre cada integración a `main`: repetir esas verificaciones sobre el commit
-integrado; generar versión única; adjuntar `.deb` y SHA-256 al release del mismo
-commit **solo después de todos los checks verdes y aprobación HIG documentada**.
-Evitar duplicados en reintentos e impedir publicación si falla cualquier etapa.
-Hacer una primera prueba controlada cuando estén resueltos HIG, permisos,
-licencia, titular y mantenedor, con CI configurado en el proveedor ya confirmado.
-Hasta entonces, usar la receta local del [README](../README.md).
+La base actual en Meson y `debian/changelog` es `0.1.0`. Cada run calcula
+`0.1.0+git<github.run_number>.<SHA12>` a partir del changelog y del commit
+checkout; `dpkg --validate-version` comprueba el formato Debian nativo. El
+contador corresponde a este workflow (incluye feature branches y PR), no al
+número de merges. Es estable en reintentos y crece entre runs; no renombrar ni
+recrear el workflow suponiendo que su contador se conservará. Una futura
+versión estable requiere subir la base deliberadamente en Meson/changelog.
+Solo la copia temporal recibe una nueva entrada de changelog; su fecha y
+`SOURCE_DATE_EPOCH` provienen del commit. La fuente versionada no se altera.
+
+En feature branches/PR solo se construye y adjunta el artefacto de prueba.
+El job `release` requiere `build` exitoso y exclusivamente un `push` a
+`refs/heads/main`. No usa `always`, `continue-on-error` ni grupos concurrency
+que descarten pushes pendientes. Cada push a `main` tiene oportunidad de
+producir su **prerelease de integración**, tag `v<VERSION>`, con `.deb` y
+SHA-256; no se presenta como release estable.
+
+Los permisos globales son `contents: read`; solo `release` recibe
+`contents: write`. Checkout no persiste credenciales. `GITHUB_TOKEN` automático
+solo se entrega a gh en el paso de publicación, sin secretos nuevos ni
+credenciales manuales. Las actions oficiales están fijadas por SHA (v4).
+
+El tag apunta al SHA completo del push. Si existe, se resuelve hasta el commit
+y se exige coincidencia antes de reutilizarlo; un draft sin tag también debe
+apuntar a ese SHA. La publicación crea primero un draft, carga assets faltantes
+y luego lo publica. En reintentos descarga y compara assets existentes: no usa
+`--clobber` ni reemplaza binarios ya publicados. Si difieren, falla y exige
+revisión; una compilación no bit-idéntica no autoriza a sobrescribir el release.
+No se firman paquetes ni se promete firma de checksums.
+
+## Gate humano y primera comprobación remota
+
+**El workflow no certifica ni aprueba HIG, licencia o identidad.** Son requisitos
+previos a permitir integrar `main`, no flags que un test pueda inventar. La
+revisión debe aportar fuentes, escenarios, entorno, resultados y límites,
+actualizar la matriz HIG y justificar lo no aplicable. No crear/integrar `main`
+ni publicar mientras queden desviaciones o comprobaciones aplicables pendientes.
+
+La protección de `main` (PR obligatorio, revisión y checks requeridos del
+pipeline real) sigue sin configurar y requiere autorización específica. Esta
+política documentada no la impone técnicamente. Si se omite el gate y se hace
+push a `main`, el workflow intentaría publicar tras el build verde: no usar eso
+como atajo para decisiones humanas pendientes.
+
+Próxima comprobación: push autorizado de la feature branch, observar el run real,
+confirmar build/tests/metadata/artefacto y ausencia de release. Solo después de
+cerrar HIG, licencia/titular/mantenedor y permisos, realizar una integración
+controlada y comprobar tag, SHA objetivo, assets/checksums y reintento sin
+reemplazos. Hasta entonces, las comprobaciones locales no demuestran publicación
+remota ni idempotencia real de la API de GitHub.

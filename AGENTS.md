@@ -18,6 +18,7 @@
   del pipeline real. El push de fuente en una feature branch como trabajo en
   desarrollo, expresamente autorizado por el usuario, no implica aprobación HIG
   ni habilita integración o release. Hoy el cumplimiento HIG **no está aprobado**
-  y no existe CI configurado.
+  y se añadió un workflow de CI cuya ejecución remota sigue pendiente; no se
+  afirma CI verde.
 - Estas instrucciones complementan las globales; no autorizan operaciones Git,
   publicaciones, instalaciones ni cambios de servicios automáticos.
