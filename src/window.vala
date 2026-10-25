@@ -9,16 +9,22 @@ namespace Music {
         private PlayQueue queue = new PlayQueue ();
         private Player player;
         private Cancellable? scan_cancel;
+        private Adw.PreferencesWindow preferences;
+        private Gtk.Label preference_status;
         private Gtk.Entry location;
         private Gtk.Button load_button;
+        private Gtk.Button reload_button;
+        private Gtk.Button browse_button;
         private Gtk.Button cancel_button;
         private Gtk.Button play_button;
         private Gtk.Spinner spinner;
-        private Gtk.Label status;
+        private Adw.ToastOverlay notices;
+        private Adw.Toast? error_toast;
         private Gtk.Label heading;
         private Gtk.Label info;
         private Gtk.Label now_playing;
-        private Gtk.Label clock;
+        private Gtk.Label elapsed_time;
+        private Gtk.Label duration_time;
         private Gtk.ListBox groups;
         private Gtk.ListBox tracks;
         private Gtk.ListBox queue_list;
@@ -34,8 +40,13 @@ namespace Music {
             player = new Player (queue, sink);
             build_ui ();
             player.changed.connect (update_player);
-            player.failure.connect ((message) => { status.label = "No se pudo reproducir: " + message; });
-            player.finished.connect (() => { status.label = "Fin de la cola"; });
+            player.failure.connect ((message) => {
+                if (closed) return;
+                show_error ("No se pudo reproducir. Revisá Preferencias.", message);
+            });
+            player.finished.connect (() => {
+                if (!closed) preference_status.label = "Fin de la cola";
+            });
             ticker = Timeout.add (500, () => {
                 double duration = player.duration ();
                 updating_position = true;
@@ -43,16 +54,20 @@ namespace Music {
                 position_scale.set_value (player.position ());
                 position_scale.sensitive = duration > 0;
                 updating_position = false;
-                clock.label = time_text (player.position ()) + " / " + time_text (duration);
+                elapsed_time.label = time_text (player.position ());
+                duration_time.label = time_text (duration);
                 return Source.CONTINUE;
             });
             close_request.connect (() => {
                 closed = true;
+                preferences.set_focus (null);
+                preferences.destroy ();
                 if (scan_cancel != null) scan_cancel.cancel ();
                 player.shutdown ();
                 if (ticker != 0) { Source.remove (ticker); ticker = 0; }
                 return false;
             });
+            load_library.begin (new LocationSettings (config_path).load ());
         }
 
         private void build_ui () {
@@ -60,43 +75,19 @@ namespace Music {
             var header = new Adw.HeaderBar ();
             header.title_widget = new Gtk.Label ("Tu música, en tu red");
             root.append (header);
-            var source = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
-            source.margin_start = source.margin_end = 16;
-            source.margin_bottom = 12;
-            location = new Gtk.Entry ();
-            location.name = "location";
-            location.hexpand = true;
-            location.placeholder_text = "Carpeta local, file:// o smb://";
-            location.text = new LocationSettings (config_path).load ();
-            source.append (location);
-            var browse = new Gtk.Button.from_icon_name ("folder-open-symbolic");
-            browse.tooltip_text = "Elegir carpeta";
-            browse.clicked.connect (() => { choose_folder.begin (); });
-            source.append (browse);
-            load_button = new Gtk.Button.with_label ("Cargar");
-            load_button.name = "load";
-            load_button.add_css_class ("suggested-action");
-            load_button.clicked.connect (() => { load_library.begin (location.text); });
-            location.activate.connect (() => { if (!loading) load_library.begin (location.text); });
-            source.append (load_button);
-            cancel_button = new Gtk.Button.with_label ("Cancelar");
-            cancel_button.name = "cancel";
-            cancel_button.sensitive = false;
-            cancel_button.clicked.connect (() => { if (scan_cancel != null) scan_cancel.cancel (); });
-            source.append (cancel_button);
+            build_preferences ();
+            var settings_button = icon_button ("emblem-system-symbolic", "Preferencias");
+            settings_button.name = "open-preferences";
+            settings_button.clicked.connect (() => {
+                location.text = new LocationSettings (config_path).load ();
+                preferences.present ();
+            });
+            header.pack_end (settings_button);
             spinner = new Gtk.Spinner ();
-            source.append (spinner);
-            root.append (source);
-            status = text_label ("Elegí una ubicación y pulsá Cargar. No se accede a la red al iniciar.");
-            status.margin_start = status.margin_end = 16;
-            status.margin_bottom = 12;
-            status.wrap = true;
-            status.selectable = true;
-            root.append (status);
+            header.pack_end (spinner);
 
             var left = new Gtk.Box (Gtk.Orientation.VERTICAL, 10);
             left.name = "library";
-            left.width_request = 220;
             left.margin_start = left.margin_end = 12;
             left.append (title_label ("Tu biblioteca"));
             grouping = new Gtk.DropDown.from_strings ({"Álbumes", "Artistas"});
@@ -146,7 +137,6 @@ namespace Music {
 
             var right = new Gtk.Box (Gtk.Orientation.VERTICAL, 10);
             right.name = "details";
-            right.width_request = 240;
             right.margin_start = right.margin_end = 12;
             var stack = new Gtk.Stack ();
             stack.vexpand = true;
@@ -166,39 +156,57 @@ namespace Music {
             stack.add_titled (scroll (queue_list), "queue", "Cola");
             right.append (stack);
             var inner = new Gtk.Paned (Gtk.Orientation.HORIZONTAL);
-            inner.start_child = center;
-            inner.end_child = right;
+            inner.start_child = panel_viewport (center);
+            inner.end_child = panel_viewport (right);
+            inner.position = 710;
+            inner.wide_handle = true;
             inner.resize_end_child = false;
-            inner.shrink_start_child = inner.shrink_end_child = false;
+            inner.shrink_start_child = inner.shrink_end_child = true;
             var panels = new Gtk.Paned (Gtk.Orientation.HORIZONTAL);
-            panels.start_child = left;
+            panels.start_child = panel_viewport (left);
             panels.end_child = inner;
+            panels.position = 258;
+            panels.wide_handle = true;
             panels.resize_start_child = false;
-            panels.shrink_start_child = false;
+            panels.shrink_start_child = true;
             panels.vexpand = true;
-            root.append (panels);
+            notices = new Adw.ToastOverlay ();
+            notices.name = "library-notices";
+            notices.child = panels;
+            notices.vexpand = true;
+            root.append (notices);
             root.append (new Gtk.Separator (Gtk.Orientation.HORIZONTAL));
             root.append (build_controls ());
             content = root;
         }
 
         private Gtk.Widget build_controls () {
-            var bar = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 16);
+            var bar = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12);
             bar.name = "controls";
-            bar.margin_start = bar.margin_end = 20;
-            bar.margin_top = bar.margin_bottom = 16;
+            bar.margin_start = bar.margin_end = 12;
+            bar.margin_top = bar.margin_bottom = 6;
+            var current = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12);
+            current.width_request = 240;
+            var artwork = new Gtk.Image.from_icon_name ("audio-x-generic-symbolic");
+            artwork.pixel_size = 48;
+            current.append (artwork);
             now_playing = text_label ("Nada en reproducción");
-            now_playing.width_request = 220;
+            now_playing.name = "now-playing";
+            now_playing.hexpand = true;
             now_playing.ellipsize = Pango.EllipsizeMode.END;
-            bar.append (now_playing);
-            var middle = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
+            current.append (now_playing);
+            bar.append (current);
+            var middle = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
             middle.hexpand = true;
-            var buttons = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12);
+            var buttons = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
+            buttons.add_css_class ("toolbar");
             buttons.halign = Gtk.Align.CENTER;
             var previous = icon_button ("media-skip-backward-symbolic", "Anterior");
             previous.clicked.connect (() => { player.previous (); });
             buttons.append (previous);
             play_button = icon_button ("media-playback-start-symbolic", "Reproducir o pausar");
+            play_button.add_css_class ("circular");
+            play_button.add_css_class ("raised");
             play_button.clicked.connect (() => {
                 if (player.state == Gst.State.PLAYING) player.pause ();
                 else {
@@ -215,45 +223,144 @@ namespace Music {
             next.clicked.connect (() => { player.next (); });
             buttons.append (next);
             middle.append (buttons);
+            var progress = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
+            elapsed_time = text_label ("0:00");
+            elapsed_time.name = "elapsed";
+            elapsed_time.add_css_class ("numeric");
+            elapsed_time.add_css_class ("dim-label");
+            progress.append (elapsed_time);
             position_scale = new Gtk.Scale.with_range (Gtk.Orientation.HORIZONTAL, 0, 1, 1);
+            position_scale.name = "position";
+            position_scale.tooltip_text = "Posición de reproducción";
+            position_scale.hexpand = true;
             position_scale.draw_value = false;
             position_scale.sensitive = false;
             position_scale.change_value.connect ((type, value) => {
                 if (!updating_position) player.seek (value);
                 return false;
             });
-            middle.append (position_scale);
-            clock = text_label ("0:00 / 0:00");
-            clock.halign = Gtk.Align.CENTER;
-            middle.append (clock);
+            progress.append (position_scale);
+            duration_time = text_label ("0:00");
+            duration_time.name = "duration";
+            duration_time.add_css_class ("numeric");
+            duration_time.add_css_class ("dim-label");
+            progress.append (duration_time);
+            middle.append (progress);
             bar.append (middle);
+            var volume_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
+            volume_box.halign = Gtk.Align.FILL;
+            var side_sizes = new Gtk.SizeGroup (Gtk.SizeGroupMode.HORIZONTAL);
+            side_sizes.add_widget (current);
+            side_sizes.add_widget (volume_box);
             var volume = new Gtk.Scale.with_range (Gtk.Orientation.HORIZONTAL, 0, 1, 0.01);
+            volume.name = "volume";
             volume.width_request = 120;
+            volume.halign = Gtk.Align.END;
             volume.draw_value = false;
             volume.tooltip_text = "Volumen";
             volume.set_value (player.volume);
             volume.value_changed.connect (() => { player.volume = volume.get_value (); });
-            bar.append (new Gtk.Image.from_icon_name ("audio-volume-high-symbolic"));
-            bar.append (volume);
+            var volume_spacer = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0);
+            volume_spacer.hexpand = true;
+            volume_box.append (volume_spacer);
+            volume_box.append (new Gtk.Image.from_icon_name ("audio-volume-high-symbolic"));
+            volume_box.append (volume);
+            bar.append (volume_box);
             return bar;
+        }
+
+        private void build_preferences () {
+            preferences = new Adw.PreferencesWindow ();
+            preferences.title = "Preferencias";
+            preferences.transient_for = this;
+            preferences.modal = true;
+            preferences.hide_on_close = true;
+            preferences.close_request.connect (() => {
+                preferences.set_focus (null);
+                return false;
+            });
+            preferences.destroy_with_parent = true;
+            preferences.default_width = 620;
+            var page = new Adw.PreferencesPage ();
+            var group = new Adw.PreferencesGroup ();
+            group.title = "Biblioteca musical";
+            var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 12);
+            location = new Gtk.Entry ();
+            location.name = "location";
+            location.placeholder_text = "Carpeta local, file:// o smb://";
+            location.text = new LocationSettings (config_path).load ();
+            box.append (location);
+            var buttons = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
+            browse_button = new Gtk.Button.with_label ("Elegir carpeta…");
+            browse_button.name = "browse";
+            browse_button.clicked.connect (() => { choose_folder.begin (); });
+            box.append (browse_button);
+            load_button = new Gtk.Button.with_label ("Aplicar y cargar");
+            load_button.name = "apply";
+            load_button.add_css_class ("suggested-action");
+            load_button.clicked.connect (apply_location);
+            location.activate.connect (apply_location);
+            buttons.append (load_button);
+            reload_button = new Gtk.Button.with_label ("Recargar");
+            reload_button.name = "reload";
+            reload_button.clicked.connect (() => { load_library.begin (new LocationSettings (config_path).load ()); });
+            buttons.append (reload_button);
+            cancel_button = new Gtk.Button.with_label ("Cancelar escaneo");
+            cancel_button.name = "cancel";
+            cancel_button.sensitive = false;
+            cancel_button.clicked.connect (() => { if (scan_cancel != null) scan_cancel.cancel (); });
+            buttons.append (cancel_button);
+            box.append (buttons);
+            preference_status = text_label ("");
+            preference_status.name = "preferences-status";
+            preference_status.wrap = true;
+            preference_status.selectable = true;
+            box.append (preference_status);
+            group.add (box);
+            page.add (group);
+            preferences.add (page);
+        }
+
+        private void show_error (string message, string detail) {
+            if (closed) return;
+            preference_status.label = detail;
+            if (error_toast != null) error_toast.dismiss ();
+            var toast = new Adw.Toast (message);
+            toast.timeout = 3;
+            toast.use_markup = false;
+            error_toast = toast;
+            notices.add_toast (toast);
+        }
+
+        private void apply_location () {
+            if (loading || closed) return;
+            try {
+                var folder = LocationSettings.parse_location (location.text);
+                new LocationSettings (config_path).save (folder.get_uri ());
+                location.text = folder.get_uri ();
+                load_library.begin (folder.get_uri ());
+            } catch (Error e) {
+                show_error ("No se pudo guardar la ubicación. Revisá Preferencias.", e.message);
+            }
         }
 
         private async void choose_folder () {
             var dialog = new Gtk.FileDialog ();
             dialog.title = "Elegir ubicación de música";
             try {
-                var folder = yield dialog.select_folder (this, null);
-                location.text = folder.get_uri ();
+                var folder = yield dialog.select_folder (preferences, null);
+                if (!closed) location.text = folder.get_uri ();
             } catch (Error e) { /* Dismissing the chooser is not a load error. */ }
         }
 
         public async void load_library (string input) {
             if (loading || closed) return;
             loading = true;
-            load_button.sensitive = location.sensitive = false;
             cancel_button.sensitive = true;
+            if (preferences.visible) cancel_button.grab_focus ();
+            load_button.sensitive = location.sensitive = reload_button.sensitive = browse_button.sensitive = false;
             spinner.start ();
-            status.label = "Leyendo biblioteca… (se mostrará al terminar)";
+            preference_status.label = "Leyendo biblioteca…";
             scan_cancel = new Cancellable ();
             try {
                 var folder = LocationSettings.parse_location (input);
@@ -262,7 +369,8 @@ namespace Music {
                 try {
                     loaded = yield scanner.scan (folder, scan_cancel);
                 } catch (IOError.NOT_MOUNTED e) {
-                    status.label = "Conectando con la ubicación…";
+                    if (closed) return;
+                    preference_status.label = "Conectando con la ubicación…";
                     var operation = new Gtk.MountOperation (this);
                     operation.password_save = PasswordSave.NEVER;
                     operation.reply.connect ((result) => { operation.password_save = PasswordSave.NEVER; });
@@ -285,18 +393,20 @@ namespace Music {
                 foreach (var track in ordered) library += track;
                 rebuild_groups ();
                 location.text = folder.get_uri ();
-                status.label = "%u pistas cargadas · %u archivos de audio omitidos".printf (library.length, scanner.skipped);
-                try { new LocationSettings (config_path).save (folder.get_uri ()); }
-                catch (Error e) { status.label += " · No se pudo recordar la ubicación: " + e.message; }
+                preference_status.label = "%u pistas cargadas · %u archivos de audio omitidos".printf (library.length, scanner.skipped);
             } catch (IOError.CANCELLED e) {
-                if (!closed) status.label = "Carga cancelada. Se conserva la biblioteca anterior.";
+                if (!closed) {
+                    preference_status.label = "Carga cancelada. Se conserva la biblioteca anterior.";
+                }
             } catch (Error e) {
-                if (!closed) status.label = "No se pudo cargar la ubicación: " + e.message;
+                if (!closed) {
+                    show_error ("No se pudo cargar la biblioteca. Revisá Preferencias.", e.message);
+                }
             } finally {
                 loading = false;
                 scan_cancel = null;
                 if (!closed) {
-                    load_button.sensitive = location.sensitive = true;
+                    load_button.sensitive = location.sensitive = reload_button.sensitive = browse_button.sensitive = true;
                     cancel_button.sensitive = false;
                     spinner.stop ();
                 }
@@ -342,6 +452,7 @@ namespace Music {
             queue_list.select_row (queue_list.get_row_at_index (queue.index));
         }
         private void update_player () {
+            if (closed) return;
             play_button.icon_name = player.state == Gst.State.PLAYING ? "media-playback-pause-symbolic" : "media-playback-start-symbolic";
             var track = queue.current;
             if (track == null) return;
@@ -363,6 +474,15 @@ namespace Music {
             var label = text_label (text);
             label.add_css_class ("heading");
             return label;
+        }
+        private static Gtk.ScrolledWindow panel_viewport (Gtk.Widget child) {
+            // Keep controls at a safe minimum internally, but clip them instead of
+            // imposing that minimum on the draggable panel or its neighbours.
+            var viewport = new Gtk.ScrolledWindow ();
+            viewport.hscrollbar_policy = Gtk.PolicyType.EXTERNAL;
+            viewport.vscrollbar_policy = Gtk.PolicyType.NEVER;
+            viewport.child = child;
+            return viewport;
         }
         private static Gtk.ScrolledWindow scroll (Gtk.Widget child) {
             var scroll = new Gtk.ScrolledWindow ();

@@ -8,4 +8,4 @@ executable('gtkplayer', core, 'src/window.vala', 'src/main.vala', dependencies: 
 install_data('data/io.github.gtkplayer.Player.desktop', install_dir: get_option('datadir') / 'applications')
 ui_tests = executable('ui-tests', core, 'src/window.vala', 'tests/ui-tests.vala', dependencies: ui_deps)
 xvfb = find_program('xvfb-run')
-test('ui', xvfb, args: ['-a', ui_tests], env: ['GDK_BACKEND=x11', 'GSETTINGS_BACKEND=memory', 'GTK_A11Y=none', 'GSK_RENDERER=cairo'], timeout: 30)
+test('ui', xvfb, args: ['-a', '-s', '-screen 0 1920x1080x24', ui_tests], env: ['GDK_BACKEND=x11', 'GSETTINGS_BACKEND=memory', 'GTK_A11Y=none', 'GSK_RENDERER=cairo', 'GIO_USE_VFS=local'], timeout: 30)

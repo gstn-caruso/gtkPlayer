@@ -77,7 +77,8 @@ namespace Music {
         }
 
         internal static bool is_symbolic_link (FileInfo info) {
-            return info.get_is_symlink ();
+            return info.get_file_type () == FileType.SYMBOLIC_LINK ||
+                (info.has_attribute (FileAttribute.STANDARD_IS_SYMLINK) && info.get_is_symlink ());
         }
 
         private bool is_audio (string name) {

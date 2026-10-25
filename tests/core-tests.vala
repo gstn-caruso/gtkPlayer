@@ -164,6 +164,34 @@ int main (string[] args) {
         File.new_for_path (fixture + "/loop").make_symbolic_link (fixture);
     } catch (Error e) { error ("Preparación: %s", e.message); }
     Test.add_func ("/library/recursive-tags-no-symlinks", test_scan);
+    Test.add_func ("/library/regular-without-symlink-attribute", () => {
+        var info = new FileInfo ();
+        info.set_name ("song.flac");
+        info.set_file_type (FileType.REGULAR);
+        assert (!info.has_attribute (FileAttribute.STANDARD_IS_SYMLINK));
+        assert (!Music.Scanner.is_symbolic_link (info));
+    });
+    Test.add_func ("/library/directory-without-symlink-attribute", () => {
+        var info = new FileInfo ();
+        info.set_name ("nested");
+        info.set_file_type (FileType.DIRECTORY);
+        assert (!info.has_attribute (FileAttribute.STANDARD_IS_SYMLINK));
+        assert (!Music.Scanner.is_symbolic_link (info));
+    });
+    Test.add_func ("/library/symlink-type-without-symlink-attribute", () => {
+        var info = new FileInfo ();
+        info.set_name ("alias.flac");
+        info.set_file_type (FileType.SYMBOLIC_LINK);
+        assert (!info.has_attribute (FileAttribute.STANDARD_IS_SYMLINK));
+        assert (Music.Scanner.is_symbolic_link (info));
+    });
+    Test.add_func ("/library/symlink-attribute-with-regular-type", () => {
+        var info = new FileInfo ();
+        info.set_name ("alias.flac");
+        info.set_file_type (FileType.REGULAR);
+        info.set_is_symlink (true);
+        assert (Music.Scanner.is_symbolic_link (info));
+    });
     Test.add_func ("/library/unavailable", test_scan_unavailable);
     Test.add_func ("/library/cancelled", test_cancelled);
     Test.add_func ("/queue/navigation-boundaries", test_queue);
