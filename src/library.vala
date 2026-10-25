@@ -48,7 +48,7 @@ namespace Music {
             FileInfo? info;
             while ((info = children.next_file (cancel)) != null) {
                 cancel.set_error_if_cancelled ();
-                if (info.get_is_symlink ()) continue;
+                if (is_symbolic_link (info)) continue;
                 var child = children.get_child (info);
                 if (info.get_file_type () == FileType.DIRECTORY) {
                     foreach (var track in walk (child, cancel, discoverer)) tracks += track;
@@ -74,6 +74,10 @@ namespace Music {
             }
             children.close (cancel);
             return tracks;
+        }
+
+        internal static bool is_symbolic_link (FileInfo info) {
+            return info.get_is_symlink ();
         }
 
         private bool is_audio (string name) {
