@@ -1,0 +1,33 @@
+Source: gtkplayer
+Section: sound
+Priority: optional
+Maintainer: GTK Player packaging (contact pending) <unassigned@example.invalid>
+Build-Depends: debhelper-compat (= 13),
+ meson (>= 1.0),
+ ninja-build,
+ pkgconf,
+ valac,
+ libglib2.0-dev,
+ libgtk-4-dev (>= 4.10),
+ libadwaita-1-dev (>= 1.4),
+ libgstreamer1.0-dev,
+ libgstreamer-plugins-base1.0-dev,
+ gstreamer1.0-plugins-base,
+ gstreamer1.0-plugins-good,
+ ffmpeg,
+ xvfb,
+ xauth,
+ dbus-daemon
+Standards-Version: 4.7.3
+Rules-Requires-Root: no
+
+Package: gtkplayer
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends},
+ gstreamer1.0-plugins-base,
+ gstreamer1.0-plugins-good,
+ gvfs-backends
+Recommends: gstreamer1.0-libav
+Description: Native GTK music player for local and SMB libraries
+ Browse albums and artists, inspect track metadata and play a queue using
+ GTK 4, libadwaita, GStreamer and the system GIO/GVfs network backends.

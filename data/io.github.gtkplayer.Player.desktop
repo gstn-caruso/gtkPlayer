@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=GTK Player
+Comment=Escuchá tu biblioteca musical local o compartida por SMB
+Exec=gtkplayer
+Icon=audio-x-generic
+Terminal=false
+Categories=AudioVideo;Audio;Player;GTK;
+StartupNotify=true
+StartupWMClass=io.github.gtkplayer.Player

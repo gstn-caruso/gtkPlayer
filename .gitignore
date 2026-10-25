@@ -1,0 +1,14 @@
+/build/
+/build-*/
+/dist/
+/obj-*/
+/debian/.debhelper/
+/debian/gtkplayer/
+/debian/gtkplayer-dbgsym/
+/debian/debhelper-build-stamp
+/debian/files
+/debian/*.debhelper
+/debian/*.substvars
+/debian/*.debhelper.log
+*.swp
+*~

@@ -1,0 +1,12 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: GTK Player
+Comment: Local packaging only. Author, copyright holder, license and real
+ maintainer contact have not been confirmed. No permission to distribute
+ or license grant is asserted by this package.
+
+Files: *
+Copyright: Copyright holder not yet specified
+License: LicenseRef-Unspecified
+ No license has been selected. All rights remain with their respective
+ holders. Confirm authorship and distribution permission before publishing
+ source or binary packages. This file does not grant any rights.

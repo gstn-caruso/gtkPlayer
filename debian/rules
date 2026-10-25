@@ -1,0 +1,7 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@ --buildsystem=meson
+
+override_dh_auto_test:
+	GIO_USE_VFS=local dbus-run-session -- dh_auto_test
