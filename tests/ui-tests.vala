@@ -69,6 +69,15 @@ Gtk.Button? find_play (Gtk.Widget widget) {
     return null;
 }
 
+Gtk.ListBox? find_list (Gtk.Widget widget) {
+    if (widget is Gtk.ListBox) return (Gtk.ListBox) widget;
+    for (var child = widget.get_first_child (); child != null; child = child.get_next_sibling ()) {
+        var found = find_list (child);
+        if (found != null) return found;
+    }
+    return null;
+}
+
 Gtk.Widget? find_toast (Gtk.Widget widget) {
     if (widget.get_css_name () == "toast") return widget;
     for (var child = widget.get_first_child (); child != null; child = child.get_next_sibling ()) {
@@ -161,6 +170,213 @@ int main (string[] args) {
         reopened.close ();
         remove_fixture (folder);
     });
+    Test.add_func ("/ui/single-activation-specific-track-and-queue", () => {
+        string folder = fixture ("8");
+        try {
+            File.new_for_path (folder + "/song.wav").copy (File.new_for_path (folder + "/track-two.wav"), FileCopyFlags.NONE);
+        } catch (Error e) { error ("%s", e.message); }
+        var sink = Gst.ElementFactory.make ("fakesink", null);
+        sink.set ("sync", true);
+        var window = new Music.Window (application (), folder + "/settings.ini", sink);
+        window.present ();
+        wait_until (() => { return !window.loading && window.track_count == 2; });
+        var tracks = find_list (find_named (window, "tracks"));
+        var queue = find_list (find_named (window, "details"));
+        var title = (Gtk.Label) find_named (window, "now-playing");
+        var play = find_play (window);
+        assert (tracks.activate_on_single_click);
+        assert (queue.activate_on_single_click);
+        assert (!has_text (window, "Doble clic"));
+        // Native row activation is also the keyboard path; this is not a physical pointer test.
+        var second = tracks.get_row_at_index (1);
+        tracks.select_row (second);
+        assert (((Gtk.Widget) second).activate ());
+        wait_until (() => { return title.label.has_prefix ("track-two\n") && play.icon_name == "media-playback-pause-symbolic"; });
+        assert (tracks.get_selected_row () == second);
+        assert (queue.get_selected_row ().get_index () == 1);
+        assert (queue.get_row_at_index (2) == null);
+        assert (has_text (find_named (window, "details"), "track-two"));
+        var first = queue.get_row_at_index (0);
+        queue.select_row (first);
+        assert (((Gtk.Widget) first).activate ());
+        wait_until (() => { return title.label.has_prefix ("song\n") && play.icon_name == "media-playback-pause-symbolic"; });
+        assert (queue.get_selected_row () == first);
+        window.close ();
+        FileUtils.unlink (folder + "/track-two.wav");
+        remove_fixture (folder);
+    });
+    Test.add_func ("/ui/transport-empty-and-load-transitions", () => {
+        string empty = fixture ();
+        string populated = fixture ();
+        assert (FileUtils.unlink (empty + "/song.wav") == 0);
+        var window = new Music.Window (application (), empty + "/settings.ini", Gst.ElementFactory.make ("fakesink", null));
+        window.present ();
+        wait_until (() => { return !window.loading; });
+        var bar = find_named (window, "controls");
+        var play = find_play (bar);
+        var previous = (Gtk.Button) play.get_parent ().get_first_child ();
+        var next = (Gtk.Button) play.get_parent ().get_last_child ();
+        var volume = (Gtk.Scale) find_named (bar, "volume");
+        assert (!previous.sensitive && !play.sensitive && !next.sensitive);
+        assert (volume.sensitive);
+        assert (bar.child_focus (Gtk.DirectionType.TAB_FORWARD));
+        assert (window.get_focus () == volume);
+        double old_volume = volume.get_value ();
+        volume.move_slider (Gtk.ScrollType.STEP_LEFT);
+        assert (volume.get_value () < old_volume);
+        window.load_library.begin (populated);
+        wait_until (() => { return !window.loading && window.track_count == 1; });
+        assert (!previous.sensitive && play.sensitive && !next.sensitive);
+        window.load_library.begin (empty);
+        wait_until (() => { return !window.loading && window.track_count == 0; });
+        assert (!previous.sensitive && !play.sensitive && !next.sensitive);
+        window.close ();
+        remove_fixture (empty);
+        remove_fixture (populated);
+    });
+    Test.add_func ("/ui/empty-library-queue-and-load-failure-guidance", () => {
+        string folder = fixture ();
+        assert (FileUtils.unlink (folder + "/song.wav") == 0);
+        var window = new Music.Window (application (), folder + "/settings.ini", Gst.ElementFactory.make ("fakesink", null));
+        window.present ();
+        wait_until (() => { return !window.loading; });
+        var center = find_named (window, "tracks");
+        assert (has_text (center, "Biblioteca vacía"));
+        assert (has_text (center, "Elegí una ubicación con música en Preferencias"));
+        assert (!has_text (center, "Seleccioná un álbum"));
+        var preferences = open_preferences (window);
+        assert (has_text (preferences, "0 pistas cargadas · 0 archivos de audio omitidos"));
+        preferences.close ();
+        var stack = (Gtk.Stack) find_list (find_named (window, "details")).get_ancestor (typeof (Gtk.Stack));
+        stack.visible_child_name = "queue";
+        wait_for_layout (stack);
+        var placeholder = find_named (window, "queue-empty");
+        assert (placeholder is Adw.StatusPage && placeholder.get_mapped ());
+        assert (has_text (placeholder, "Cola vacía"));
+        assert (has_text (placeholder, "Cargá música desde Preferencias"));
+        window.load_library.begin (folder + "/unavailable");
+        wait_until (() => { return !window.loading; });
+        assert (has_text (center, "No se pudo cargar la biblioteca"));
+        assert (has_text (center, "Revisá la ubicación en Preferencias y volvé a cargar"));
+        assert (!has_text (center, "Biblioteca vacía"));
+        wait_for_notice (window, "No se pudo cargar la biblioteca. Revisá Preferencias.");
+        preferences = open_preferences (window);
+        assert (((Gtk.Label) find_named (preferences, "preferences-status")).label.contains ("unavailable"));
+        preferences.close ();
+        window.load_library.begin (folder);
+        wait_until (() => { return !window.loading; });
+        assert (has_text (center, "Biblioteca vacía"));
+        assert (!has_text (center, "No se pudo cargar"));
+        window.close ();
+        remove_fixture (folder);
+    });
+    Test.add_func ("/ui/current-track-survives-group-and-location-changes", () => {
+        string folder = fixture ("8");
+        string empty = fixture ();
+        assert (FileUtils.unlink (empty + "/song.wav") == 0);
+        try {
+            string[] command = {"ffmpeg", "-v", "error", "-i", folder + "/song.wav", "-metadata", "album=Otro álbum", folder + "/other.flac"};
+            int status;
+            Process.spawn_sync (null, command, null, SpawnFlags.SEARCH_PATH, null, null, null, out status);
+            assert (status == 0);
+        } catch (Error e) { error ("%s", e.message); }
+        var sink = Gst.ElementFactory.make ("fakesink", null);
+        sink.set ("sync", true);
+        var window = new Music.Window (application (), folder + "/settings.ini", sink);
+        window.present ();
+        wait_until (() => { return !window.loading && window.track_count == 2; });
+        var groups = find_list (find_named (window, "library"));
+        var tracks = find_list (find_named (window, "tracks"));
+        var play = find_play (window);
+        var previous = (Gtk.Button) play.get_parent ().get_first_child ();
+        var next = (Gtk.Button) play.get_parent ().get_last_child ();
+        // Filter to the original WAV's album, leaving one playable visible track.
+        Gtk.ListBoxRow? album = null;
+        for (int i = 1; groups.get_row_at_index (i) != null; i++)
+            if (has_text (groups.get_row_at_index (i), "Sin álbum")) album = groups.get_row_at_index (i);
+        assert (album != null);
+        groups.select_row (album);
+        assert (tracks.get_row_at_index (1) == null);
+        assert (has_text (find_named (window, "tracks"), "Sin álbum — Artista desconocido · 1 pista"));
+        assert (play.sensitive && !previous.sensitive && !next.sensitive);
+        assert (((Gtk.Widget) tracks.get_row_at_index (0)).activate ());
+        wait_until (() => { return play.icon_name == "media-playback-pause-symbolic"; });
+        groups.select_row (groups.get_row_at_index (0));
+        assert (tracks.get_row_at_index (1) != null);
+        // The active queue is still the single-track selection, not the newly visible group.
+        assert (play.sensitive && !previous.sensitive && !next.sensitive);
+        window.load_library.begin (empty);
+        wait_until (() => { return !window.loading && window.track_count == 0; });
+        assert (tracks.get_row_at_index (0) == null);
+        assert (play.sensitive && !previous.sensitive && !next.sensitive);
+        assert (has_text (find_named (window, "controls"), "song\n"));
+        play.clicked ();
+        wait_until (() => { return play.icon_name == "media-playback-start-symbolic"; });
+        assert (play.sensitive);
+        play.clicked ();
+        wait_until (() => { return play.icon_name == "media-playback-pause-symbolic"; });
+        assert (has_text (find_named (window, "controls"), "song\n"));
+        window.close ();
+        FileUtils.unlink (folder + "/other.flac");
+        remove_fixture (folder);
+        remove_fixture (empty);
+    });
+    Test.add_func ("/ui/transport-eos-queue-boundaries", () => {
+        string folder = fixture ("0.5");
+        try {
+            File.new_for_path (folder + "/song.wav").copy (File.new_for_path (folder + "/track-two.wav"), FileCopyFlags.NONE);
+        } catch (Error e) { error ("%s", e.message); }
+        var sink = Gst.ElementFactory.make ("fakesink", null);
+        sink.set ("sync", true);
+        var window = new Music.Window (application (), folder + "/settings.ini", sink);
+        window.present ();
+        wait_until (() => { return !window.loading && window.track_count == 2; });
+        var play = find_play (window);
+        var previous = (Gtk.Button) play.get_parent ().get_first_child ();
+        var next = (Gtk.Button) play.get_parent ().get_last_child ();
+        var title = (Gtk.Label) find_named (window, "now-playing");
+        play.clicked ();
+        wait_until (() => { return play.icon_name == "media-playback-pause-symbolic"; });
+        assert (title.label.has_prefix ("song\n"));
+        assert (!previous.sensitive && play.sensitive && next.sensitive);
+        wait_until (() => { return title.label.has_prefix ("track-two\n"); });
+        assert (previous.sensitive && play.sensitive && !next.sensitive);
+        var preferences = open_preferences (window);
+        wait_until (() => { return has_text (preferences, "Fin de la cola"); });
+        assert (play.icon_name == "media-playback-start-symbolic");
+        assert (previous.sensitive && play.sensitive && !next.sensitive);
+        assert (find_list (find_named (window, "details")).get_selected_row ().get_index () == 1);
+        window.close ();
+        FileUtils.unlink (folder + "/track-two.wav");
+        remove_fixture (folder);
+    });
+    Test.add_func ("/ui/plural-library-and-selection-summary", () => {
+        string folder = fixture ();
+        try {
+            File.new_for_path (folder + "/song.wav").copy (File.new_for_path (folder + "/other.wav"), FileCopyFlags.NONE);
+            FileUtils.set_contents (folder + "/broken.wav", "not audio");
+            FileUtils.set_contents (folder + "/broken-two.wav", "not audio");
+        } catch (Error e) { error ("%s", e.message); }
+        var window = new Music.Window (application (), folder + "/settings.ini", Gst.ElementFactory.make ("fakesink", null));
+        window.present ();
+        wait_until (() => { return !window.loading && window.track_count == 2; });
+        var preferences = open_preferences (window);
+        assert (has_text (preferences, "2 pistas cargadas · 2 archivos de audio omitidos"));
+        preferences.close ();
+        assert (has_text (find_named (window, "tracks"), "Todas las pistas · 2 pistas"));
+        var groups = find_list (find_named (window, "library"));
+        groups.select_row (groups.get_row_at_index (1));
+        assert (has_text (find_named (window, "tracks"), "Sin álbum — Artista desconocido · 2 pistas"));
+        var stack = (Gtk.Stack) find_list (find_named (window, "details")).get_ancestor (typeof (Gtk.Stack));
+        stack.visible_child_name = "queue";
+        wait_for_layout (stack);
+        var placeholder = find_named (window, "queue-empty");
+        assert (placeholder.get_mapped ());
+        assert (has_text (placeholder, "Activá una pista para reproducir la selección y crear la cola"));
+        window.close ();
+        foreach (string file in new string[] {"other.wav", "broken.wav", "broken-two.wav"}) FileUtils.unlink (folder + "/" + file);
+        remove_fixture (folder);
+    });
     Test.add_func ("/ui/no-status-row-summary-in-preferences", () => {
         string folder = fixture ();
         try { FileUtils.set_contents (folder + "/broken.wav", "not audio"); }
@@ -169,7 +385,8 @@ int main (string[] args) {
         window.present ();
         wait_until (() => { return !window.loading && window.track_count == 1; });
         var preferences = open_preferences (window);
-        assert (has_text (preferences, "1 pistas cargadas · 1 archivos de audio omitidos"));
+        // Correct the old fixed-plural contract: singular counts must agree in Spanish.
+        assert (has_text (preferences, "1 pista cargada · 1 archivo de audio omitido"));
         preferences.close ();
         wait_for_layout (window);
         var header = window.content.get_first_child ();
@@ -182,8 +399,10 @@ int main (string[] args) {
         assert (gap.abs () <= 1);
         assert (find_named (window, "library-status") == null);
         assert (!has_text (window, "pistas cargadas"));
+        assert (!has_text (window, "pista cargada"));
         assert (!has_text (window, "audio omitidos"));
-        assert (has_text (find_named (window, "tracks"), "Todas las pistas · 1 pistas"));
+        assert (has_text (find_named (window, "tracks"), "Todas las pistas · 1 pista"));
+        assert (!has_text (find_named (window, "tracks"), "1 pistas"));
         capture_if_requested (window);
         window.close ();
         FileUtils.unlink (folder + "/broken.wav");
@@ -370,6 +589,9 @@ int main (string[] args) {
         // Only remove the audio after discovery, then exercise the real error via fakesink.
         assert (FileUtils.unlink (path) == 0);
         var play = find_play (window);
+        var previous = (Gtk.Button) play.get_parent ().get_first_child ();
+        var next = (Gtk.Button) play.get_parent ().get_last_child ();
+        assert (play.sensitive && !previous.sensitive && !next.sensitive);
         play.clicked ();
         string message = "No se pudo reproducir. Revisá Preferencias.";
         var notice = wait_for_notice (window, message);
@@ -380,6 +602,7 @@ int main (string[] args) {
         assert (!has_text (notice, uri));
         assert (!has_text (notice, filename));
         assert (has_text (notice, message));
+        assert (play.sensitive && !previous.sensitive && !next.sensitive);
         assert (open_preferences (window) == preferences);
         assert (detail.label != "");
         assert (detail.label != loaded_status);
@@ -395,6 +618,7 @@ int main (string[] args) {
         play.clicked ();
         wait_until (() => { return play.icon_name == "media-playback-pause-symbolic"; });
         wait_until (() => { return detail.label == "Fin de la cola"; });
+        assert (play.sensitive && !previous.sensitive && !next.sensitive);
         preferences.close ();
         wait_until (() => { return !has_text (window, message); });
         assert (!has_text (window, "Fin de la cola"));
@@ -502,8 +726,10 @@ int main (string[] args) {
         wait_until (() => { return elapsed.label == "0:01"; });
         assert (((Gtk.Widget) play).activate ());
         wait_until (() => { return play.icon_name == "media-playback-start-symbolic"; });
-        assert (previous.grab_focus ());
-        foreach (var control in new Gtk.Widget[] {play, next, position, volume}) {
+        assert (!previous.sensitive && play.sensitive && next.sensitive);
+        assert (!previous.grab_focus ());
+        assert (play.grab_focus ());
+        foreach (var control in new Gtk.Widget[] {next, position, volume}) {
             assert (bar.child_focus (Gtk.DirectionType.TAB_FORWARD));
             assert (window.get_focus () == control);
         }
@@ -517,9 +743,17 @@ int main (string[] args) {
         assert (next.grab_focus ());
         assert (((Gtk.Widget) next).activate ());
         wait_until (() => { return title.label.has_prefix ("track-two\n"); });
+        assert (previous.sensitive && play.sensitive && !next.sensitive);
+        assert (!next.grab_focus ());
+        assert (previous.grab_focus ());
+        foreach (var control in new Gtk.Widget[] {play, position, volume}) {
+            assert (bar.child_focus (Gtk.DirectionType.TAB_FORWARD));
+            assert (window.get_focus () == control);
+        }
         assert (previous.grab_focus ());
         assert (((Gtk.Widget) previous).activate ());
         wait_until (() => { return title.label.has_prefix ("song\n"); });
+        assert (!previous.sensitive && play.sensitive && next.sensitive);
         window.close ();
         FileUtils.unlink (folder + "/track-two.wav");
         remove_fixture (folder);

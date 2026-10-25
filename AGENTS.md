@@ -18,7 +18,9 @@
   del pipeline real. El push de fuente en una feature branch como trabajo en
   desarrollo, expresamente autorizado por el usuario, no implica aprobación HIG
   ni habilita integración o release. Hoy el cumplimiento HIG **no está aprobado**
-  y se añadió un workflow de CI cuya ejecución remota sigue pendiente; no se
-  afirma CI verde.
+  aunque el [run CI 40237594338](https://github.com/gstn-caruso/gtkPlayer/actions/runs/40237594338)
+  terminó verde para `a9202982ddc49f515aafe257805b27b607f8cdad` (26 tests).
+  Los cambios locales posteriores sin commit aún no tienen CI remoto; ese verde
+  no los cubre ni aprueba HIG.
 - Estas instrucciones complementan las globales; no autorizan operaciones Git,
   publicaciones, instalaciones ni cambios de servicios automáticos.

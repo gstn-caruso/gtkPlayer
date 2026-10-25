@@ -14,7 +14,8 @@
    auditoría manual. No ignorar fallos ni forzar push o saltar verificaciones.
 4. Cada integración a `main` deberá generar una versión única y construir un
    `.deb` desde el commit integrado en un entorno limpio y fijo. El workflow
-   descrito abajo implementa el mecanismo; su ejecución remota está pendiente.
+   descrito abajo implementa el mecanismo; el build remoto en feature branch ya
+   pasó, pero el job de publicación desde `main` aún no se ejecutó.
 5. Publicar paquetes y releases solo tras el verde de todas las comprobaciones
    y resolver licencia, titular y contacto del mantenedor. Un build fallido no
    puede producir un release público. No reutilizar una versión para binarios
@@ -24,17 +25,30 @@
 
 ## Estado actual
 
-La configuración se prepara en `feat/ci-hig-readiness`, desde `6afb904`, sin
+La configuración está publicada en `feat/ci-hig-readiness`, HEAD `a920298`, sin
 integrar las ramas de desarrollo a `main`. No existe `main` aún. El repositorio
 [gstn-caruso/gtkPlayer](https://github.com/gstn-caruso/gtkPlayer) es **público**, con
 `origin` en `https://github.com/gstn-caruso/gtkPlayer.git`. El usuario autorizó el
 push de fuente en feature branches como trabajo en desarrollo, sin aprobar HIG
 ni resolver las decisiones de identidad y licencia.
 
-Se añadió [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) localmente.
-**Ejecución remota pendiente: no se afirma CI verde.** No se configuraron branch
-protection ni releases. La integración y publicación siguen bloqueadas:
-**HIG NO APROBADO, CI remoto pendiente, licencia/titular/mantenedor pendientes**.
+El [workflow](../.github/workflows/ci.yml) tiene un run remoto **SUCCESS**:
+[40237594338](https://github.com/gstn-caruso/gtkPlayer/actions/runs/40237594338),
+SHA `a9202982ddc49f515aafe257805b27b607f8cdad`, Ubuntu 24.04 amd64, 26 tests
+(11 core y 15 UI). El job `release` quedó **SKIPPED** por ser feature branch.
+Evidencia del coordinador al 2026-10-25: artefacto `ubuntu-24.04-amd64-deb`
+(ZIP de 30096 bytes), descargado y verificado contra `SHA256SUMS`; paquete
+`gtkplayer`, versión `0.1.0+git1.a9202982ddc4`, arquitectura `amd64`.
+La copia temporal está en
+`/tmp/gtkplayer-ci-artifact.9rOsKB/gtkplayer_0.1.0+git1.a9202982ddc4_amd64.deb`;
+no es un enlace permanente de release. No se instaló el paquete ni se publicaron
+releases o tags. El enlace al run es la referencia oficial.
+
+Los cambios UI locales posteriores, sin commit sobre ese SHA, tienen 32 tests
+verdes reportados (11 core y 21 UI), pero **no CI remoto** y dos defectos de
+estados vacíos pendientes en la [matriz HIG](gnome-hig.md). No se configuró branch
+protection. La integración y publicación siguen bloqueadas:
+**HIG NO APROBADO, CI del árbol futuro pendiente, licencia/titular/mantenedor pendientes**.
 La publicación de fuente no implica licencia open-source ni concede permisos
 de redistribución. Los artefactos CI son paquetes de prueba, no paquetes finales
 aprobados para distribución.
@@ -68,8 +82,8 @@ encargo y autorización correspondientes.
   contener entorno heredado), credenciales ni metadata Git.
 
 El paquete es **dinámico para Ubuntu 24.04 amd64**, sin runtime universal. Una
-construcción local en otra distribución no verifica ese destino; el primer run
-remoto debe comprobarlo. Los avisos de licencia y mantenedor pendientes se
+construcción local en otra distribución no verifica ese destino; el run remoto
+citado sí construyó para ese destino, sin probar instalación. Los avisos de licencia y mantenedor pendientes se
 conservan en el paquete.
 
 ## Versionado y publicación de integraciones
@@ -118,9 +132,12 @@ política documentada no la impone técnicamente. Si se omite el gate y se hace
 push a `main`, el workflow intentaría publicar tras el build verde: no usar eso
 como atajo para decisiones humanas pendientes.
 
-Próxima comprobación: push autorizado de la feature branch, observar el run real,
-confirmar build/tests/metadata/artefacto y ausencia de release. Solo después de
-cerrar HIG, licencia/titular/mantenedor y permisos, realizar una integración
-controlada y comprobar tag, SHA objetivo, assets/checksums y reintento sin
-reemplazos. Hasta entonces, las comprobaciones locales no demuestran publicación
-remota ni idempotencia real de la API de GitHub.
+Próxima comprobación: resolver los pendientes HIG y probar el árbol posterior
+en CI mediante un push expresamente autorizado. El primer run ya confirmó
+build/tests/metadata/artefacto y ausencia de release para `a920298`, no para los
+cambios locales. Solo después de cerrar HIG, licencia/titular/mantenedor y
+permisos, realizar una integración controlada y comprobar tag, SHA objetivo,
+assets/checksums y reintento sin reemplazos. La lógica del job `release` fue
+revisada por lectura, pero no ejecutada: ni el verde de feature branch ni las
+comprobaciones locales demuestran publicación remota o idempotencia real de
+la API de GitHub.

@@ -12,9 +12,11 @@ La aplicación debe cumplir las [GNOME Human Interface Guidelines](https://devel
 según las directrices aplicables a su alcance. El stack Vala + GTK 4 + libadwaita
 no demuestra por sí solo ese cumplimiento. **Estado: NO APROBADO**; hay
 desviaciones y comprobaciones pendientes en la [matriz HIG](docs/gnome-hig.md).
-Merge y release quedan bloqueados hasta resolverlas y contar con CI verde real;
-el [workflow](.github/workflows/ci.yml) se añadió localmente, con ejecución remota
-pendiente (no se afirma CI verde). Ver también [las instrucciones del proyecto](AGENTS.md).
+Merge y release quedan bloqueados hasta resolverlas y contar con CI verde del
+árbol a integrar. El [run CI 40237594338](https://github.com/gstn-caruso/gtkPlayer/actions/runs/40237594338)
+terminó verde para `a9202982ddc49f515aafe257805b27b607f8cdad` (26 tests), no
+para los cambios locales posteriores sin commit, cuyo CI remoto sigue pendiente.
+Ver también [las instrucciones del proyecto](AGENTS.md).
 
 ## Usar la biblioteca
 
@@ -42,8 +44,16 @@ sin rutas ni URI, sobre los paneles y sin tapar los controles inferiores; el
 detalle completo queda en Preferencias.
 Una ubicación válida queda guardada aunque falle la lectura; una URI inválida
 se rechaza sin modificar la configuración ni la biblioteca. Si no se puede
-guardar, no se inicia la carga de esa elección. Doble clic en una pista inicia
-la cola con las pistas de la selección actual.
+guardar, no se inicia la carga de esa elección. Un clic o toque en una pista inicia
+la cola con las pistas de la selección actual; también se puede activar una fila
+con el teclado. Una entrada de Cola se activa de la misma forma. La biblioteca
+vacía orienta a elegir una ubicación con música en Preferencias y la cola vacía
+explica cómo crearla. Un fallo de carga sin biblioteca tiene un mensaje distinto,
+además del aviso y su detalle en Preferencias. Quedan dos defectos conocidos en
+el árbol local: cancelar la carga inicial sin biblioteca deja «Leyendo biblioteca…»
+y cambiar la agrupación tras un fallo sin biblioteca sustituye el error por un
+vacío válido (también puede anunciarlo durante la carga). Ver la [matriz HIG](docs/gnome-hig.md).
+Los conteos distinguen singular y plural, por ejemplo «1 pista cargada · 1 archivo de audio omitido».
 
 SMB utiliza GIO/GVfs y el diálogo de autenticación del sistema. Se necesita
 `gvfs-backends` y una sesión de escritorio con sus servicios disponibles.
@@ -71,7 +81,11 @@ carátulas), transporte centrado en una fila, tiempos a ambos lados del progreso
 en otra y volumen agrupado a la derecha. Usa controles GTK y clases de estilo de
 libadwaita 1.4 (`toolbar`, `circular`, `raised`, `numeric`, `dim-label`), sin CSS
 personalizado ni colores Spotify. El texto largo se elide; no hay altura fija
-que recorte texto o reduzca los botones.
+que recorte texto o reduzca los botones. Anterior y Siguiente solo están activos
+cuando hay una pista en esa dirección de la cola. Reproducir/Pausar está activo
+si hay una pista visible que iniciar o una pista actual, que se puede pausar y
+retomar aunque cambie la ubicación o el grupo visible. Con biblioteca y cola
+vacías el transporte está deshabilitado; el volumen sigue siendo ajustable.
 
 Para el footer se consultaron las guías oficiales de GNOME sobre
 [botones](https://developer.gnome.org/hig/patterns/controls/buttons.html),
@@ -86,7 +100,7 @@ La compatibilidad de las clases se contrastó con la
 **96 px lógicos es nuestro objetivo de producto, no una regla HIG.** En Xvfb,
 con fuentes estándar, la ocupación bajó de 127 a 92 px a 1280×800, incluidos
 los márgenes. También se verificaron 92 px a 1600×800; los botones mantienen
-blancos de 34×34 px. Los 15 tests UI
+blancos de 34×34 px. Los 21 tests UI
 pasan en claro y oscuro. La ejecución se realizó con GTK 4.22/libadwaita 1.9;
 no se ejecutó con las versiones mínimas. No se certifican fuentes grandes,
 alto contraste, lector de pantalla ni una auditoría completa de accesibilidad.
@@ -133,7 +147,7 @@ los tests:
 GIO_USE_VFS=local dbus-run-session -- meson test -C build --print-errorlogs
 ```
 
-Son dos suites: once casos core y quince UI. Cubren lectura de metadata FLAC
+Son dos suites: once casos core y veintiún UI. Cubren lectura de metadata FLAC
 local, metadata sintética sin atributo opcional de enlace, recursión y enlaces,
 errores y cancelación inicial, límites de cola,
 fin de pista/avance, controles básicos, activación de la ventana con cuatro
@@ -144,7 +158,14 @@ fallo de guardado, error de reproducción con detalle en Preferencias y reintent
 cancelación de escaneo y cierre durante una carga o reproducción sin actualizar
 los controles al cerrar. Verifican que no haya fila de estado ni hueco entre
 encabezado y paneles, que los conteos de carga/omisión estén en Preferencias y
-que los errores transitorios no expongan rutas ni URI. Incluyen geometría real del footer tras layout,
+que los errores transitorios no expongan rutas ni URI. Cubren los conteos 0/1/2,
+la guía de biblioteca y cola vacías y su diferencia con un fallo de carga.
+Comprueban la propiedad nativa de activación con un clic y el resultado de activar
+programáticamente una pista no inicial y otra entrada de cola, no un clic/toque
+físico. También cubren sensibilidad del transporte al cargar/vaciar, límites de
+cola, omisión de controles inválidos en el foco, filtro de grupos, conservación
+de pausa/retomar al cambiar a una ubicación vacía, EOS y error/reintento.
+Incluyen geometría real del footer tras layout,
 centrado, texto largo sin solapamientos, agrupación de volumen, orden de foco,
 activación de transporte, actualización de título/tiempos y seeking con fakesink.
 También prueban la asignación geométrica de ambos separadores a 1280×800 y
@@ -250,8 +271,13 @@ El repositorio [gstn-caruso/gtkPlayer](https://github.com/gstn-caruso/gtkPlayer)
 es público y tiene `origin` configurado. La fuente es trabajo en desarrollo:
 el usuario autorizó su push en una feature branch, lo que no significa aprobación
 HIG ni un release. La integración a `main` y los releases siguen bloqueados por
-HIG no aprobado y CI remoto pendiente; licencia, titular y mantenedor siguen
-pendientes. El [workflow](.github/workflows/ci.yml) construye y prueba sobre
+HIG no aprobado; licencia, titular y mantenedor siguen pendientes. El CI verde
+de `a920298` no cubre el árbol local posterior: se reportaron 32 tests locales
+verdes (11 core y 21 UI), pero falta su CI remoto y la cobertura de los dos defectos
+anteriores. El run citado construyó el `.deb` de prueba
+`gtkplayer_0.1.0+git1.a9202982ddc4_amd64.deb`; el coordinador verificó su checksum
+y metadata tras descargar el artefacto. No se instaló ni se publicó un release;
+el job `release` quedó omitido por ser feature branch. El [workflow](.github/workflows/ci.yml) construye y prueba sobre
 Ubuntu 24.04 amd64 (GTK 4.14/libadwaita 1.5), sin demostrar las versiones mínimas
 absolutas ni compatibilidad universal. En `feat/**`, `fix/**` y PR hacia `main`
 solo adjunta `.deb` de prueba y SHA-256 como artefacto CI, no release final.
@@ -259,6 +285,7 @@ Tras cerrar los gates humanos, cada push a `main` con build verde está previsto
 que publique un prerelease `v0.1.0+git<RUN_NUMBER>.<SHA12>` del SHA integrado, sin
 sobrescribir assets en reintentos. Solo se modifica el changelog de la copia CI;
 el paquete sigue siendo dinámico, sin runtime incluido. No hay protección de
-rama configurada y todavía no se verificó una publicación remota. Los permisos,
+rama configurada y todavía no se verificaron publicación remota ni idempotencia
+de release. Los permisos,
 reintentos, retención y requisitos de integración están en
 [ramas y releases](docs/branches-and-releases.md).

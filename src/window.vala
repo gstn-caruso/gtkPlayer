@@ -17,10 +17,14 @@ namespace Music {
         private Gtk.Button browse_button;
         private Gtk.Button cancel_button;
         private Gtk.Button play_button;
+        private Gtk.Button previous_button;
+        private Gtk.Button next_button;
         private Gtk.Spinner spinner;
         private Adw.ToastOverlay notices;
         private Adw.Toast? error_toast;
         private Gtk.Label heading;
+        private Gtk.Label selection_hint;
+        private Adw.StatusPage queue_empty;
         private Gtk.Label info;
         private Gtk.Label now_playing;
         private Gtk.Label elapsed_time;
@@ -120,15 +124,17 @@ namespace Music {
             summary.append (cover);
             var summary_text = new Gtk.Box (Gtk.Orientation.VERTICAL, 8);
             summary_text.valign = Gtk.Align.CENTER;
-            heading = title_label ("Tu biblioteca está vacía");
+            heading = title_label ("Leyendo biblioteca…");
             heading.add_css_class ("title-1");
             summary_text.append (heading);
-            summary_text.append (text_label ("Seleccioná un álbum o artista.\nDoble clic en una pista para reproducir."));
+            selection_hint = text_label ("La música aparecerá aquí al terminar la carga");
+            selection_hint.wrap = true;
+            summary_text.append (selection_hint);
             summary.append (summary_text);
             center.append (summary);
             tracks = new Gtk.ListBox ();
             tracks.add_css_class ("boxed-list");
-            tracks.activate_on_single_click = false;
+            tracks.activate_on_single_click = true;
             tracks.row_activated.connect ((row) => {
                 queue.replace (visible_tracks);
                 if (queue.select (row.get_index ())) { player.stop (); player.play (); refresh_queue (); }
@@ -149,7 +155,13 @@ namespace Music {
             info.selectable = true;
             stack.add_titled (scroll (info), "data", "Datos");
             queue_list = new Gtk.ListBox ();
-            queue_list.activate_on_single_click = false;
+            queue_empty = new Adw.StatusPage ();
+            queue_empty.name = "queue-empty";
+            queue_empty.icon_name = "view-list-symbolic";
+            queue_empty.title = "Cola vacía";
+            queue_empty.description = "Cargá música desde Preferencias y activá una pista para crear la cola";
+            queue_list.set_placeholder (queue_empty);
+            queue_list.activate_on_single_click = true;
             queue_list.row_activated.connect ((row) => {
                 if (queue.select (row.get_index ())) { player.stop (); player.play (); }
             });
@@ -178,6 +190,7 @@ namespace Music {
             root.append (new Gtk.Separator (Gtk.Orientation.HORIZONTAL));
             root.append (build_controls ());
             content = root;
+            update_player ();
         }
 
         private Gtk.Widget build_controls () {
@@ -201,9 +214,9 @@ namespace Music {
             var buttons = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
             buttons.add_css_class ("toolbar");
             buttons.halign = Gtk.Align.CENTER;
-            var previous = icon_button ("media-skip-backward-symbolic", "Anterior");
-            previous.clicked.connect (() => { player.previous (); });
-            buttons.append (previous);
+            previous_button = icon_button ("media-skip-backward-symbolic", "Anterior");
+            previous_button.clicked.connect (() => { player.previous (); });
+            buttons.append (previous_button);
             play_button = icon_button ("media-playback-start-symbolic", "Reproducir o pausar");
             play_button.add_css_class ("circular");
             play_button.add_css_class ("raised");
@@ -219,9 +232,9 @@ namespace Music {
                 }
             });
             buttons.append (play_button);
-            var next = icon_button ("media-skip-forward-symbolic", "Siguiente");
-            next.clicked.connect (() => { player.next (); });
-            buttons.append (next);
+            next_button = icon_button ("media-skip-forward-symbolic", "Siguiente");
+            next_button.clicked.connect (() => { player.next (); });
+            buttons.append (next_button);
             middle.append (buttons);
             var progress = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
             elapsed_time = text_label ("0:00");
@@ -393,13 +406,18 @@ namespace Music {
                 foreach (var track in ordered) library += track;
                 rebuild_groups ();
                 location.text = folder.get_uri ();
-                preference_status.label = "%u pistas cargadas · %u archivos de audio omitidos".printf (library.length, scanner.skipped);
+                preference_status.label = (library.length == 1 ? "%u pista cargada" : "%u pistas cargadas").printf (library.length) +
+                    " · " + (scanner.skipped == 1 ? "%u archivo de audio omitido" : "%u archivos de audio omitidos").printf (scanner.skipped);
             } catch (IOError.CANCELLED e) {
                 if (!closed) {
                     preference_status.label = "Carga cancelada. Se conserva la biblioteca anterior.";
                 }
             } catch (Error e) {
                 if (!closed) {
+                    if (library.length == 0) {
+                        heading.label = "No se pudo cargar la biblioteca";
+                        selection_hint.label = "Revisá la ubicación en Preferencias y volvé a cargar";
+                    }
                     show_error ("No se pudo cargar la biblioteca. Revisá Preferencias.", e.message);
                 }
             } finally {
@@ -433,7 +451,13 @@ namespace Music {
         private void show_tracks (Track[] selection, string title) {
             visible_tracks = selection;
             clear_list (tracks);
-            heading.label = title + " · %u pistas".printf (selection.length);
+            heading.label = selection.length == 0 ? "Biblioteca vacía" :
+                title + (selection.length == 1 ? " · %u pista" : " · %u pistas").printf (selection.length);
+            selection_hint.label = selection.length == 0 ? "Elegí una ubicación con música en Preferencias" :
+                "Activá una pista para reproducir la selección";
+            queue_empty.description = library.length == 0 ?
+                "Cargá música desde Preferencias y activá una pista para crear la cola" :
+                "Activá una pista para reproducir la selección y crear la cola";
             foreach (var track in selection) {
                 var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12);
                 row.margin_start = row.margin_end = 12;
@@ -445,6 +469,7 @@ namespace Music {
                 row.append (text_label (time_text ((double) track.duration / Gst.SECOND)));
                 tracks.append (row);
             }
+            update_player ();
         }
         private void refresh_queue () {
             clear_list (queue_list);
@@ -455,6 +480,9 @@ namespace Music {
             if (closed) return;
             play_button.icon_name = player.state == Gst.State.PLAYING ? "media-playback-pause-symbolic" : "media-playback-start-symbolic";
             var track = queue.current;
+            play_button.sensitive = track != null || visible_tracks.length > 0;
+            previous_button.sensitive = track != null && queue.index > 0;
+            next_button.sensitive = track != null && queue.index + 1 < queue.tracks.length;
             if (track == null) return;
             now_playing.label = track.title + "\n" + track.artist;
             info.label = track.title + "\n\nArtista: " + track.artist + "\nÁlbum: " + track.album +
