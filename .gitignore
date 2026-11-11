@@ -2,6 +2,9 @@
 /build-*/
 /dist/
 /obj-*/
+/subprojects/libprojectM-*/
+/subprojects/packagecache/
+/subprojects/.wraplock
 /debian/.debhelper/
 /debian/gtkplayer/
 /debian/gtkplayer-dbgsym/

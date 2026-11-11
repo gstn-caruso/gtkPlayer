@@ -13,6 +13,12 @@ namespace Music {
         public string album = "Sin álbum";
         public uint number = 0;
         public uint64 duration = 0;
+        public string codec = "";
+        public uint sample_rate;
+        public uint bit_depth;
+        public uint channels;
+        public uint bitrate;
+        internal bool audio_info_known;
         public Bytes? cover_data;
         internal string cover_origin = "embedded";
         internal int64 cover_size = -1;
@@ -33,6 +39,12 @@ namespace Music {
             track.album = album;
             track.number = number;
             track.duration = duration;
+            track.codec = codec;
+            track.sample_rate = sample_rate;
+            track.bit_depth = bit_depth;
+            track.channels = channels;
+            track.bitrate = bitrate;
+            track.audio_info_known = audio_info_known;
             // Bytes is immutable: preserve artwork without copying or encoding it.
             track.cover_data = cover_data;
             track.cover_origin = cover_origin;
@@ -44,6 +56,41 @@ namespace Music {
             track.modified_time = modified_time;
             track.modified_usec = modified_usec;
             return track;
+        }
+
+        public string audio_description () {
+            if (!audio_info_known || codec == "") return "Formato no disponible";
+            string text = codec;
+            if (sample_rate > 0) {
+                string rate = "%g".printf (sample_rate / 1000.0);
+                text += " · " + rate + " kHz";
+            }
+            if (bit_depth > 0) text += " · %u bits".printf (bit_depth);
+            if (channels == 1) text += " · Mono";
+            else if (channels == 2) text += " · Estéreo";
+            else if (channels > 2) text += " · %u canales".printf (channels);
+            if (bitrate > 0 && bit_depth == 0) text += " · %u kb/s".printf (bitrate / 1000);
+            return text;
+        }
+
+        internal void write_audio_info (KeyFile key, string group) {
+            if (!audio_info_known) return;
+            key.set_string (group, "audio-codec", codec);
+            key.set_uint64 (group, "audio-rate", sample_rate);
+            key.set_uint64 (group, "audio-depth", bit_depth);
+            key.set_uint64 (group, "audio-channels", channels);
+            key.set_uint64 (group, "audio-bitrate", bitrate);
+        }
+
+        internal void read_audio_info (KeyFile key, string group) throws Error {
+            // Older caches/sessions remain readable; the next scan enriches them.
+            if (!key.has_key (group, "audio-codec")) return;
+            codec = key.get_string (group, "audio-codec");
+            sample_rate = (uint) key.get_uint64 (group, "audio-rate");
+            bit_depth = (uint) key.get_uint64 (group, "audio-depth");
+            channels = (uint) key.get_uint64 (group, "audio-channels");
+            bitrate = (uint) key.get_uint64 (group, "audio-bitrate");
+            audio_info_known = true;
         }
     }
 
@@ -70,6 +117,9 @@ namespace Music {
                 if (before == null || track.title != before.title || track.artist != before.artist ||
                     track.album != before.album || track.number != before.number ||
                     track.duration != before.duration || track.has_fingerprint != before.has_fingerprint ||
+                    track.audio_info_known != before.audio_info_known || track.codec != before.codec ||
+                    track.sample_rate != before.sample_rate || track.bit_depth != before.bit_depth ||
+                    track.channels != before.channels || track.bitrate != before.bitrate ||
                     track.cover_origin != before.cover_origin) return false;
                 if (track.has_fingerprint && (track.file_size != before.file_size ||
                     track.modified_time != before.modified_time || track.modified_usec != before.modified_usec)) return false;
@@ -96,6 +146,7 @@ namespace Music {
                 cache.set_string (group, "album", track.album);
                 cache.set_uint64 (group, "number", track.number);
                 cache.set_uint64 (group, "duration", track.duration);
+                track.write_audio_info (cache, group);
                 if (track.has_fingerprint) {
                     cache.set_int64 (group, "file-size", track.file_size);
                     cache.set_uint64 (group, "modified-time", track.modified_time);
@@ -143,6 +194,7 @@ namespace Music {
                 track.album = cache.get_string (group, "album");
                 track.number = (uint) cache.get_uint64 (group, "number");
                 track.duration = cache.get_uint64 (group, "duration");
+                track.read_audio_info (cache, group);
                 if (cache.has_key (group, "file-size") &&
                     cache.has_key (group, "modified-time") && cache.has_key (group, "modified-usec")) {
                     track.file_size = cache.get_int64 (group, "file-size");
@@ -296,7 +348,7 @@ namespace Music {
             int64 file_size = info.get_size ();
             uint64 modified_time = info.get_attribute_uint64 (FileAttribute.TIME_MODIFIED);
             uint32 modified_usec = info.get_attribute_uint32 (FileAttribute.TIME_MODIFIED_USEC);
-            if (cached != null && cached.has_fingerprint && has_fingerprint &&
+            if (cached != null && cached.audio_info_known && cached.has_fingerprint && has_fingerprint &&
                 cached.file_size == file_size && cached.modified_time == modified_time &&
                 cached.modified_usec == modified_usec) {
                 folder_cover.refresh (cached, cancel);
@@ -325,7 +377,28 @@ namespace Music {
                 var stream = discovered.get_stream_info ();
                 if (stream is Gst.PbUtils.DiscovererContainerInfo)
                     read_tags (track, ((Gst.PbUtils.DiscovererContainerInfo) stream).get_tags ());
-                foreach (var audio in discovered.get_audio_streams ()) read_tags (track, audio.get_tags ());
+                foreach (var stream_info in discovered.get_audio_streams ()) {
+                    var audio = (Gst.PbUtils.DiscovererAudioInfo) stream_info;
+                    read_tags (track, audio.get_tags ());
+                    if (track.audio_info_known) continue;
+                    track.sample_rate = audio.get_sample_rate ();
+                    track.channels = audio.get_channels ();
+                    track.bitrate = audio.get_bitrate ();
+                    var caps = audio.get_caps ();
+                    if (caps != null && caps.get_size () > 0) {
+                        string media = caps.get_structure (0).get_name ();
+                        track.codec = Gst.PbUtils.get_codec_description (caps);
+                        if (media == "audio/x-flac") track.codec = "FLAC";
+                        else if (media == "audio/x-raw") track.codec = "PCM";
+                        else if (media == "audio/x-alac") track.codec = "ALAC";
+                        else if (media == "audio/x-vorbis") track.codec = "Vorbis";
+                        else if (media == "audio/x-opus") track.codec = "Opus";
+                        // Depth describes the stored signal only for these lossless codecs.
+                        if (media == "audio/x-flac" || media == "audio/x-raw" || media == "audio/x-alac")
+                            track.bit_depth = audio.get_depth ();
+                    }
+                    track.audio_info_known = true;
+                }
                 if (track.cover_data == null) {
                     if (cached != null && cached.cover_origin == "folder") {
                         track.cover_data = cached.cover_data;

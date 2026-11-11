@@ -182,9 +182,14 @@ void capture_if_requested (Gtk.Widget widget, string suffix = "") {
     if (suffix != "") path = path + suffix + ".png";
     wait_for_layout (widget);
     var paintable = new Gtk.WidgetPaintable (widget);
-    var snapshot = new Gtk.Snapshot ();
-    paintable.snapshot (snapshot, widget.get_width (), widget.get_height ());
-    var node = snapshot.free_to_node ();
+    Gsk.RenderNode? node = null;
+    for (int attempt = 0; attempt < 10 && node == null; attempt++) {
+        var snapshot = new Gtk.Snapshot ();
+        paintable.snapshot (snapshot, widget.get_width (), widget.get_height ());
+        node = snapshot.free_to_node ();
+        // A fullscreen/style transition can invalidate the node between ticks.
+        if (node == null) wait_for_layout (widget);
+    }
     assert (node != null);
     var texture = widget.get_native ().get_renderer ().render_texture (node, null);
     assert (texture.save_to_png (path));
@@ -341,14 +346,102 @@ void test_visual_album_queue_actions () {
     assert (back.get_mapped ());
     assert (cover.get_mapped () && cover.get_paintable () is Gdk.Texture);
     assert (actions.tooltip_text == "Acciones del álbum");
+    assert (!search.visible);
+    assert (((Gtk.ListView) find_named (window, "song-list")).model.get_n_items () == 2);
+    assert (has_text (find_named (window, "tracks"), "2 pistas · 0 min 16 s"));
+    assert (has_text (find_named (window, "album-format"), "FLAC · 44.1 kHz · 16 bits · Mono"));
     back.clicked ();
     wait_for_layout (window);
     assert (grid.get_mapped () && !back.get_mapped ());
+    assert (search.get_mapped () && search.text == "primera");
     search.text = "sin coincidencias";
     search.search_changed ();
     assert (grid.model.get_n_items () == 0 && has_text (window, "Sin resultados") && !actions.visible);
     close_and_flush (window);
     foreach (string file in new string[] {"one.flac", "two.flac", "cover.jpg"}) FileUtils.unlink (folder + "/" + file);
+    remove_fixture (folder);
+}
+
+void test_album_transport_formats_and_adaptation () {
+    string folder = fixture ("8");
+    try {
+        string[] command = {"ffmpeg", "-v", "error", "-i", folder + "/song.wav", "-ar", "48000", "-ac", "2", "-sample_fmt", "s16",
+            "-metadata", "artist=Banda", "-metadata", "album=Disco", "-metadata", "title=FLAC de prueba",
+            "-metadata", "track=1", "-y", folder + "/one.flac"};
+        int status;
+        Process.spawn_sync (null, command, null, SpawnFlags.SEARCH_PATH, null, null, null, out status);
+        assert (status == 0);
+        command = new string[] {"ffmpeg", "-v", "error", "-i", folder + "/song.wav", "-metadata", "artist=Banda",
+            "-metadata", "album=Disco", "-metadata", "title=WAV de prueba", "-metadata", "track=2", "-y", folder + "/two.wav"};
+        Process.spawn_sync (null, command, null, SpawnFlags.SEARCH_PATH, null, null, null, out status);
+        assert (status == 0);
+        var pixbuf = new Gdk.Pixbuf (Gdk.Colorspace.RGB, false, 8, 144, 144);
+        pixbuf.fill (0xb8891bffU);
+        pixbuf.save (folder + "/cover.jpg", "jpeg");
+    } catch (Error e) { error ("%s", e.message); }
+    var sink = Gst.ElementFactory.make ("fakesink", null);
+    sink.set ("sync", true);
+    var window = new Music.Window (application (), folder + "/settings.ini", sink);
+    window.present ();
+    wait_until (() => { return !window.loading && window.track_count == 3; });
+    select_album (find_named (window, "library"), "Banda", "Disco");
+    var controls = find_named (window, "album-controls");
+    var play = (Gtk.Button) find_named (window, "album-play");
+    var append = (Gtk.Button) find_named (window, "album-append");
+    var next = (Gtk.Button) find_named (window, "album-next");
+    var queue = (Gtk.ListView) find_named (window, "queue-list");
+    var songs = (Gtk.ListView) find_named (window, "song-list");
+    assert (has_text (find_named (window, "album-format"), "Formatos de audio variados"));
+    Test.message ("Mixed album: %s; %s", ((Music.Track) songs.model.get_item (0)).audio_description (),
+        ((Music.Track) songs.model.get_item (1)).audio_description ());
+    assert (media_row (list_item (songs, 0)).tooltip_text.contains ("WAV · 44.1 kHz · Mono"));
+    assert (media_row (list_item (songs, 1)).tooltip_text.contains ("FLAC · 48 kHz · 16 bits · Estéreo"));
+    assert (!find_named (window, "library-search").visible);
+    assert (queue.model.get_n_items () == 0 && play.sensitive);
+    assert (window.get_focus () == play);
+    assert (controls.child_focus (Gtk.DirectionType.TAB_FORWARD));
+    assert (window.get_focus () == append);
+    assert (((Gtk.Widget) append).activate ());
+    wait_until (() => { return queue.model.get_n_items () == 2; });
+    assert (find_play (window).icon_name == "media-playback-start-symbolic");
+    assert (controls.child_focus (Gtk.DirectionType.TAB_FORWARD));
+    assert (window.get_focus () == next);
+    assert (play.grab_focus () && ((Gtk.Widget) play).activate ());
+    wait_until (() => { return play.icon_name == "media-playback-pause-symbolic"; });
+    assert (queue.model.get_n_items () == 4);
+    assert (((Music.QueueEntry) queue.model.get_item (0)).track.title == "WAV de prueba");
+    string active = ((Music.QueueEntry) queue.model.get_item (0)).id;
+    assert (play.tooltip_text == "Pausar álbum");
+    assert (has_text (media_row (list_item (songs, 0)), "Reproduciendo"));
+    assert (has_text (media_row (list_item (queue, 0)), "Reproduciendo"));
+    play.clicked ();
+    wait_until (() => { return play.tooltip_text == "Continuar álbum"; });
+    assert (queue.model.get_n_items () == 4 && find_play (window).icon_name == "media-playback-start-symbolic");
+    assert (has_text (media_row (list_item (songs, 0)), "En pausa"));
+    play.clicked ();
+    wait_until (() => { return play.tooltip_text == "Pausar álbum"; });
+    assert (queue.model.get_n_items () == 4);
+    next.clicked ();
+    assert (queue.model.get_n_items () == 6 && ((Music.QueueEntry) queue.model.get_item (0)).id == active);
+    assert (((Music.QueueEntry) queue.model.get_item (1)).track.title == "WAV de prueba");
+    assert (((Music.QueueEntry) queue.model.get_item (2)).track.title == "FLAC de prueba");
+    capture_if_requested (window, "-album");
+    window.set_default_size (1024, 600);
+    var settings = Gtk.Settings.get_default ();
+    string original_font = settings.gtk_font_name;
+    settings.gtk_font_name = "Sans 18";
+    wait_for_layout (window);
+    assert (window.get_surface ().get_width () == 1024 && window.get_surface ().get_height () == 600);
+    foreach (var button in new Gtk.Widget[] {play, append, next, find_named (window, "library-actions")}) {
+        var bounds = bounds_in (button, window);
+        assert (button.get_mapped () && bounds.get_x () >= 0 && bounds.get_x () + bounds.get_width () <= window.get_width ());
+        assert (bounds.get_y () >= 0 && bounds.get_y () + bounds.get_height () <= window.get_height ());
+    }
+    assert (songs.get_height () > 100);
+    capture_if_requested (window, "-album-1024-large-text");
+    settings.gtk_font_name = original_font;
+    close_and_flush (window);
+    foreach (string file in new string[] {"one.flac", "two.wav", "cover.jpg"}) FileUtils.unlink (folder + "/" + file);
     remove_fixture (folder);
 }
 
@@ -646,10 +739,156 @@ void test_native_pointer_drag () {
     remove_fixture (folder);
 }
 
+Music.VisualizerWindow? visualizer_for (Music.Window owner) {
+    var windows = Gtk.Window.get_toplevels ();
+    for (uint i = 0; i < windows.get_n_items (); i++) {
+        var window = windows.get_item (i) as Music.VisualizerWindow;
+        if (window != null && window.transient_for == owner) return window;
+    }
+    return null;
+}
+
+void visualizer_key (Music.VisualizerWindow window, uint key, Gdk.ModifierType modifiers = 0) {
+    var controllers = window.observe_controllers ();
+    for (uint i = 0; i < controllers.get_n_items (); i++) {
+        var controller = controllers.get_item (i) as Gtk.EventControllerKey;
+        if (controller != null && controller.name == "visualizer-keys") {
+            assert (controller.key_pressed (key, 0, modifiers));
+            return;
+        }
+    }
+    assert_not_reached ();
+}
+
+void step_visualizer_preset (Music.VisualizerWindow window, int direction, bool fullscreen = false) {
+    uint previous = window.active_preset;
+    uint switches = window.preset_switches;
+    string name = direction < 0 ? "visualizer-previous-preset" : "visualizer-next-preset";
+    var control = (Gtk.Button) find_named (window, name + (fullscreen ? "-fullscreen" : ""));
+    assert (control.sensitive && control.get_mapped ());
+    assert (control.grab_focus ());
+    assert (((Gtk.Widget) control).activate ());
+    wait_until (() => { return window.preset_switches > switches; });
+    assert (window.active_preset == (previous + (direction < 0 ? 4 : 1)) % 5);
+}
+
+void test_visualizer_lifecycle () {
+    string folder = fixture ("30");
+    var sink = Gst.ElementFactory.make ("fakesink", null);
+    sink.set ("sync", true);
+    var window = new Music.Window (application (), folder + "/settings.ini", sink);
+    window.present ();
+    wait_until (() => { return !window.loading && window.track_count == 1; });
+    var open = (Gtk.Button) find_named (window, "open-visualizer");
+    open.clicked ();
+    var visualizer = visualizer_for (window);
+    assert (visualizer != null && !visualizer.modal && visualizer.resizable);
+    wait_for_layout (visualizer);
+    assert (has_text (visualizer, "Poné música para empezar"));
+    assert (visualizer.rendered_frames == 0);
+    assert (!find_named (visualizer, "visualizer-previous-preset").sensitive);
+    assert (!find_named (visualizer, "visualizer-next-preset").sensitive);
+    open.clicked ();
+    assert (visualizer_for (window) == visualizer);
+    find_play (window).clicked ();
+    wait_until (() => { return visualizer.rendered_frames > 30; });
+    assert (visualizer.preset_switches == 1);
+    assert (!has_text (visualizer, "No se pudo iniciar el visualizador"));
+    uint initial_preset = visualizer.active_preset;
+    step_visualizer_preset (visualizer, 1);
+    step_visualizer_preset (visualizer, -1);
+    assert (visualizer.active_preset == initial_preset);
+    for (int i = 0; i < 5; i++) step_visualizer_preset (visualizer, 1);
+    assert (visualizer.active_preset == initial_preset);
+    assert (find_play (window).icon_name == "media-playback-pause-symbolic");
+    if (Environment.get_variable ("GTKPLAYER_TEST_VISUALIZER_LONG") == "1") {
+        uint first = visualizer.active_preset;
+        uint before = visualizer.preset_switches;
+        int64 deadline = get_monotonic_time () + 24 * TimeSpan.SECOND;
+        while (visualizer.preset_switches == before && get_monotonic_time () < deadline) {
+            while (MainContext.default ().pending ()) MainContext.default ().iteration (false);
+            Thread.usleep (1000);
+        }
+        assert (visualizer.preset_switches > before && visualizer.active_preset != first);
+        Test.message ("Automatic preset switch: %u → %u, %u frames", first,
+            visualizer.active_preset, visualizer.rendered_frames);
+        capture_if_requested (visualizer, "-visualizer-before-resize");
+    }
+    if (Environment.get_variable ("GTKPLAYER_TEST_FULLSCREEN") == "1") {
+        uint entering_frame = visualizer.rendered_frames;
+        ((Gtk.Button) find_named (visualizer, "visualizer-fullscreen")).clicked ();
+        wait_until (() => { return visualizer.fullscreened; });
+        wait_until (() => { return visualizer.rendered_frames > entering_frame + 5; });
+        wait_for_layout (visualizer);
+        assert (find_named (visualizer, "visualizer-unfullscreen").get_mapped ());
+        step_visualizer_preset (visualizer, 1, true);
+        step_visualizer_preset (visualizer, -1, true);
+        capture_if_requested (visualizer, "-visualizer-fullscreen");
+        visualizer_key (visualizer, Gdk.Key.F11);
+        wait_until (() => { return !visualizer.fullscreened; });
+        wait_for_layout (visualizer);
+        visualizer_key (visualizer, Gdk.Key.F11);
+        wait_until (() => { return visualizer.fullscreened; });
+        wait_for_layout (visualizer);
+        visualizer_key (visualizer, Gdk.Key.Escape);
+        wait_until (() => { return !visualizer.fullscreened; });
+        uint exiting_frame = visualizer.rendered_frames;
+        wait_until (() => { return visualizer.rendered_frames > exiting_frame + 5; });
+    }
+    visualizer.set_default_size (640, 400);
+    wait_for_layout (visualizer);
+    uint resized_frame = visualizer.rendered_frames;
+    wait_until (() => { return visualizer.rendered_frames > resized_frame + 12; });
+    assert (find_named (visualizer, "visualizer-fullscreen").get_mapped ());
+    var surface = find_named (visualizer, "visualizer-surface");
+    var paintable = new Gtk.WidgetPaintable (surface);
+    var snapshot = new Gtk.Snapshot ();
+    paintable.snapshot (snapshot, surface.get_width (), surface.get_height ());
+    var node = snapshot.free_to_node ();
+    assert (node != null);
+    var texture = surface.get_native ().get_renderer ().render_texture (node, null);
+    var pixels = new uint8[texture.width * texture.height * 4];
+    texture.download (pixels, texture.width * 4);
+    uint colored = 0;
+    for (int i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] > 40 || pixels[i + 1] > 40 || pixels[i + 2] > 40) colored++;
+        assert (pixels[i + 3] == 255);
+    }
+    assert (colored > 100);
+    capture_if_requested (visualizer, "-visualizer");
+    find_play (window).clicked ();
+    wait_until (() => { return find_visible_label (visualizer, "En pausa") != null; });
+    step_visualizer_preset (visualizer, -1);
+    step_visualizer_preset (visualizer, 1);
+    assert (find_play (window).icon_name == "media-playback-start-symbolic");
+    uint paused_frames = visualizer.rendered_frames;
+    wait_for_layout (visualizer);
+    // One queued GTK resize/draw is allowed; continuous animation must stop.
+    assert (visualizer.rendered_frames <= paused_frames + 1);
+    visualizer.close ();
+    assert (visualizer_for (window) == null);
+    assert (find_play (window).icon_name == "media-playback-start-symbolic");
+    find_play (window).clicked ();
+    open.clicked ();
+    var reopened = visualizer_for (window);
+    assert (reopened != null && reopened != visualizer);
+    wait_until (() => { return reopened.rendered_frames > 2; });
+    visualizer_key (reopened, Gdk.Key.w, Gdk.ModifierType.CONTROL_MASK);
+    assert (find_play (window).icon_name == "media-playback-pause-symbolic");
+    open.clicked ();
+    reopened = visualizer_for (window);
+    wait_until (() => { return reopened.rendered_frames > 2; });
+    close_and_flush (window);
+    assert (!reopened.visible && visualizer_for (window) == null);
+    remove_fixture (folder);
+}
+
 int main (string[] args) {
     Test.init (ref args);
     Gst.init (ref args);
     Adw.init ();
+    string? test_font = Environment.get_variable ("GTKPLAYER_TEST_FONT");
+    if (test_font != null) Gtk.Settings.get_default ().gtk_font_name = test_font;
     string? scheme = Environment.get_variable ("GTKPLAYER_TEST_COLOR_SCHEME");
     if (scheme != null) {
         assert (scheme == "light" || scheme == "dark");
@@ -2489,10 +2728,12 @@ int main (string[] args) {
         remove_fixture (folder);
     });
     Test.add_func ("/ui/visual-album-queue-actions-search-artwork", test_visual_album_queue_actions);
+    Test.add_func ("/ui/album-transport-formats-adaptation", test_album_transport_formats_and_adaptation);
     Test.add_func ("/ui/queue-import-drop-and-cancel", test_queue_import_drop_and_cancel);
     Test.add_func ("/ui/queue-session-reopen-no-autoplay", test_queue_session_reopen);
     Test.add_func ("/ui/adaptive-overlays-restore-proportions", test_adaptive_overlays_restore_proportions);
     Test.add_func ("/ui/initial-empty-states-survive-navigation", test_initial_empty_states_survive_navigation);
     Test.add_func ("/ui/native-pointer-drag-copy-move-files-escape", test_native_pointer_drag);
+    Test.add_func ("/ui/visualizer-play-pause-reopen-owner-close", test_visualizer_lifecycle);
     return Test.run ();
 }

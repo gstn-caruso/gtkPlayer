@@ -24,6 +24,35 @@ void test_scan () {
             assert_cmpstr (tracks[0].album, CompareOperator.EQ, "Disco");
             assert_cmpuint (tracks[0].number, CompareOperator.EQ, 2);
             assert (tracks[0].duration > 0);
+            assert (tracks[0].codec == "FLAC" && tracks[0].sample_rate == 44100);
+            assert (tracks[0].bit_depth == 16 && tracks[0].channels == 1);
+            assert (tracks[0].audio_description () == "FLAC · 44.1 kHz · 16 bits · Mono");
+            var cache = new Music.LibraryCache (fixture + "/audio-info-cache");
+            cache.save ("file:///audio-info", tracks);
+            var loaded = cache.load ("file:///audio-info");
+            assert (loaded[0].audio_description () == tracks[0].audio_description ());
+            var queue = new PlayQueue ();
+            queue.append (tracks);
+            queue.select (0);
+            var session = QueueSession.decode (new QueueSession.capture (queue, 0).encode ());
+            assert (session.entries[0].track.audio_description () == tracks[0].audio_description ());
+            // Simulate an old cache: a matching fingerprint must still be enriched once.
+            loaded[0].audio_info_known = false;
+            assert (!Music.LibraryCache.same_contents (loaded, tracks, new Cancellable ()));
+            cache.save ("file:///audio-info", loaded);
+            loaded = cache.load ("file:///audio-info");
+            assert (loaded[0].codec == "" && !loaded[0].audio_info_known);
+            var upgrade_loop = new MainLoop ();
+            var upgrade = new Music.Scanner ();
+            upgrade.scan.begin (File.new_for_path (fixture), new Cancellable (), loaded, (source, result2) => {
+                try {
+                    var enriched = upgrade.scan.end (result2);
+                    assert (upgrade.discovered == 1);
+                    assert (enriched[0].audio_description () == "FLAC · 44.1 kHz · 16 bits · Mono");
+                } catch (Error e) { error ("Migración: %s", e.message); }
+                upgrade_loop.quit ();
+            });
+            upgrade_loop.run ();
         } catch (Error e) { error ("Escaneo: %s", e.message); }
         loop.quit ();
     });
@@ -689,6 +718,57 @@ void test_remove_current_paused () {
     player.shutdown ();
 }
 
+void test_visualizer_audio_branch () {
+    // A real 48 kHz stereo source: the analysis branch must not resample output.
+    try {
+        string audio = fixture + "/tap.wav";
+        string[] command = {"ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+            "sine=frequency=220:duration=2", "-ar", "48000", "-ac", "2", "-y", audio};
+        int status;
+        Process.spawn_sync (null, command, null, SpawnFlags.SEARCH_PATH, null, null, null, out status);
+        assert (status == 0);
+        var queue = new PlayQueue ();
+        queue.append ({new Track (File.new_for_path (audio).get_uri (), "Audio")});
+        queue.select (0);
+        var sink = Gst.ElementFactory.make ("fakesink", null);
+        sink.set ("sync", true);
+        var player = new Player (queue, sink);
+        assert (player.visualization.available);
+        player.visualization.enable (true);
+        bool received = false;
+        bool finished = false;
+        bool failed = false;
+        var loop = new MainLoop ();
+        player.failure.connect (() => { failed = true; loop.quit (); });
+        player.finished.connect (() => { finished = true; loop.quit (); });
+        uint poll = Timeout.add (20, () => {
+            var pcm = player.visualization.read ();
+            if (pcm.length == 0) return Source.CONTINUE;
+            assert (pcm.length % 8 == 0);
+            bool nonzero = false;
+            foreach (uint8 value in pcm) if (value != 0) nonzero = true;
+            assert (nonzero);
+            var caps = sink.get_static_pad ("sink").get_current_caps ();
+            assert (caps != null);
+            int rate, channels;
+            assert (caps.get_structure (0).get_int ("rate", out rate) && rate == 48000);
+            assert (caps.get_structure (0).get_int ("channels", out channels) && channels == 2);
+            received = true;
+            player.visualization.enable (false);
+            assert (player.visualization.read ().length == 0);
+            return Source.CONTINUE;
+        });
+        uint timeout = Timeout.add_seconds (5, () => { loop.quit (); return Source.REMOVE; });
+        player.play ();
+        loop.run ();
+        Source.remove (poll);
+        if (finished || failed) Source.remove (timeout);
+        assert (received && finished && !failed);
+        player.shutdown ();
+        FileUtils.unlink (audio);
+    } catch (Error e) { error ("%s", e.message); }
+}
+
 int main (string[] args) {
     Test.init (ref args);
     Gst.init (ref args);
@@ -747,6 +827,7 @@ int main (string[] args) {
     Test.add_func ("/player/eos-next-and-finish", test_playback_eos);
     Test.add_func ("/player/pause-seek-volume", test_player_controls);
     Test.add_func ("/player/error-does-not-skip", test_player_error);
+    Test.add_func ("/player/visualizer-pcm-preserves-output-and-eos", test_visualizer_audio_branch);
     int status = Test.run ();
     FileUtils.unlink (fixture + "/alias.flac");
     FileUtils.unlink (fixture + "/loop");

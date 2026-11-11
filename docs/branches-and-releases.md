@@ -191,3 +191,36 @@ Para este incremento, se publicará la fuente en la feature branch y se
 abrirá un PR hacia `main`. Tras CI verde se integrará y se comprobarán el
 run de `main`, el tag, el SHA objetivo y los checksums de sus assets. Esta
 excepción se limita a los cambios revisados en esta sesión.
+
+## Integración del detalle de álbum y el visualizador — 2026-11-11
+
+El usuario pidió «mergea y push» tras revisar el visualizador nativo con
+projectM, la navegación de presets mediante flechas y el uso de una copia del
+audio reproducido. Se registra autorización puntual para integrar el estado
+revisado de `feat/native-visualizer`, incluido el detalle de álbum y formato
+de audio que ya estaba pendiente en el árbol al comenzar este incremento.
+La fuente se publicará en esa feature branch; se abrirá PR hacia `main` y
+se exigirá CI verde antes de integrar. La autorización incluye el prerelease
+experimental que activa el workflow existente al hacer push del merge a `main`.
+No se integra directamente, no se fuerza push ni se omiten checks.
+
+Esta excepción corresponde solo a este estado. **HIG NO APROBADO**, con
+verificaciones manuales pendientes en la [matriz HIG](gnome-hig.md), e
+identidad, licencia, titular y contacto aún sin decidir. No es una aprobación
+HIG ni una elección de licencia; no amplía las excepciones a trabajo futuro.
+El motor incluye sus fuentes y avisos originales conforme a
+[la documentación de projectM](projectm.md).
+
+Al iniciar la integración, `main` local y `origin/main` apuntaban a
+`ce3fbf781007`, merge del PR #2. El estado revisado cuenta con compilación y
+77 casos locales previos al agregado de las flechas, luego 47 UI verdes con
+las flechas y comprobación prolongada en Weston con alto contraste y Sans 18.
+El paquete anterior no cubre las flechas; el pipeline real deberá reconstruir
+todo desde el commit publicado. Se ajusta su smoke de binario sin instalar
+para resolver la biblioteca privada desde el DESTDIR o paquete extraído;
+no se instala software en el equipo del usuario.
+
+Plan autorizado: publicar fuente y registro, comprobar CI del SHA exacto,
+integrar por PR y comprobar después el run de `main`, el prerelease, el SHA
+del tag y los checksums de sus assets. La ejecución y los enlaces se registran
+como evidencia posterior; este párrafo no afirma que ya se hayan realizado.

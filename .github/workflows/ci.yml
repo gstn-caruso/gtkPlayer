@@ -24,8 +24,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential valac meson ninja-build pkgconf \
-            libglib2.0-dev libgtk-4-dev libadwaita-1-dev \
+            build-essential valac meson cmake ninja-build pkgconf \
+            libglib2.0-dev libgtk-4-dev libadwaita-1-dev libepoxy-dev libgl-dev libglx-dev \
             libsoup-3.0-dev libjson-glib-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
@@ -56,7 +56,7 @@ jobs:
           meson install -C build --destdir "$work/stage"
           test -x "$work/stage/usr/bin/gtkplayer"
           desktop-file-validate "$work/stage/usr/share/applications/io.github.gtkplayer.Player.desktop"
-          "$work/stage/usr/bin/gtkplayer" --help
+          LD_LIBRARY_PATH="$work/stage/usr/lib/x86_64-linux-gnu" "$work/stage/usr/bin/gtkplayer" --help
           mkdir "$work/source"
           rsync -a --exclude=/.git/ --exclude=/build/ --exclude='/build-*/' \
             --exclude=/dist/ --exclude='/obj-*/' ./ "$work/source/"
@@ -80,7 +80,7 @@ jobs:
           dpkg-deb --extract "$package" "$work/unpacked"
           test -x "$work/unpacked/usr/bin/gtkplayer"
           desktop-file-validate "$work/unpacked/usr/share/applications/io.github.gtkplayer.Player.desktop"
-          "$work/unpacked/usr/bin/gtkplayer" --help
+          LD_LIBRARY_PATH="$work/unpacked/usr/lib/x86_64-linux-gnu" "$work/unpacked/usr/bin/gtkplayer" --help
           mkdir -p dist
           cp "$package" dist/
           (cd dist && sha256sum "gtkplayer_${PACKAGE_VERSION}_amd64.deb" > SHA256SUMS)
@@ -142,7 +142,7 @@ jobs:
           if [ -z "$release" ]; then
             gh release create "$RELEASE_TAG" --target "$TARGET_SHA" --draft --prerelease \
               --title "$RELEASE_TAG" \
-              --notes 'Integration build for Ubuntu 24.04 amd64 (dynamic linking, no bundled runtime). See repository documentation for scope and known limitations.'
+              --notes 'Experimental integration build for Ubuntu 24.04 amd64 (system GTK/GStreamer and a private projectM library). See repository documentation for scope, source notices and known limitations.'
           fi
           existing=$(mktemp -d)
           for asset in "gtkplayer_${PACKAGE_VERSION}_amd64.deb" SHA256SUMS; do

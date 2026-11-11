@@ -159,16 +159,19 @@ namespace Music {
         public Track[] tracks = {};
         public string? entry_id;
         public string? artist;
+        public bool song_row { get; private set; }
         public Gtk.Image artwork;
         private Gtk.Label title;
         private Gtk.Label subtitle;
         private Gtk.Label duration;
+        private Gtk.Label audio_format;
         private Gtk.Label marker;
         private Gtk.Separator before;
         private Gtk.Separator after;
         public signal void requested (string action);
         public MediaRow (bool card = false, bool queue = false) {
             Object (orientation: Gtk.Orientation.VERTICAL, spacing: 0);
+            song_row = !card && !queue;
             before = new Gtk.Separator (Gtk.Orientation.HORIZONTAL);
             after = new Gtk.Separator (Gtk.Orientation.HORIZONTAL);
             before.add_css_class ("queue-insertion");
@@ -209,7 +212,20 @@ namespace Music {
             duration = new Gtk.Label ("");
             duration.add_css_class ("numeric");
             duration.visible = !card;
-            metadata.append (duration);
+            duration.xalign = 1;
+            var details = new Gtk.Box (Gtk.Orientation.VERTICAL, 2);
+            details.valign = Gtk.Align.CENTER;
+            details.append (duration);
+            audio_format = new Gtk.Label ("");
+            audio_format.name = "track-format";
+            audio_format.xalign = 1;
+            audio_format.max_width_chars = 12;
+            audio_format.ellipsize = Pango.EllipsizeMode.END;
+            audio_format.add_css_class ("caption");
+            audio_format.add_css_class ("dim-label");
+            audio_format.visible = !card && !queue;
+            details.append (audio_format);
+            metadata.append (details);
             var menu = new Gtk.MenuButton ();
             menu.icon_name = "view-more-symbolic";
             menu.tooltip_text = queue ? "Acciones de la entrada" : "Acciones de música";
@@ -257,9 +273,11 @@ namespace Music {
             title.label = track.title;
             subtitle.label = track.artist;
             duration.label = "%d:%02d".printf ((int) (track.duration / Gst.SECOND / 60), (int) (track.duration / Gst.SECOND % 60));
-            marker.label = status;
-            marker.visible = status != "";
-            tooltip_text = track.title + " — " + track.artist;
+            audio_format.label = track.codec;
+            audio_format.tooltip_text = track.audio_description ();
+            audio_format.update_property (Gtk.AccessibleProperty.DESCRIPTION, track.audio_description (), -1);
+            set_status (status);
+            tooltip_text = track.title + " — " + track.artist + "\n" + track.audio_description ();
             artwork.set_from_icon_name ("audio-x-generic-symbolic");
             insertion (0);
         }
@@ -281,6 +299,12 @@ namespace Music {
             insertion (0);
         }
         public void insertion (int edge) { before.visible = edge < 0; after.visible = edge > 0; }
+        public void set_status (string status, bool current = false) {
+            marker.label = status;
+            marker.visible = status != "";
+            if (current) title.add_css_class ("accent");
+            else title.remove_css_class ("accent");
+        }
         public void unbind () { tracks = {}; entry_id = artist = null; artwork.clear (); insertion (0); }
     }
 }

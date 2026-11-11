@@ -39,3 +39,10 @@
   prerelease experimental que activa el workflow existente. El alcance y la
   evidencia se registran en [la política de integración](docs/branches-and-releases.md#integración-del-árbol-de-biblioteca-y-la-cola--2026-11-10).
   HIG, identidad y licencia continúan pendientes para este incremento.
+- **Autorización puntual del 2026-11-11:** el usuario pidió «mergea y push»
+  después de revisar el visualizador nativo, sus flechas de presets y el audio
+  de reproducción. Autoriza integrar el estado revisado de esta sesión, con
+  el detalle de álbum que ya estaba pendiente en el árbol, mediante PR y CI
+  verde, incluido el prerelease experimental del workflow existente. El
+  [registro de integración](docs/branches-and-releases.md#integración-del-detalle-de-álbum-y-el-visualizador--2026-11-11)
+  delimita esta excepción; no aprueba HIG ni decide identidad o licencia.
