@@ -97,15 +97,6 @@ Gtk.Button? find_play (Gtk.Widget widget) {
     return null;
 }
 
-Gtk.ListBox? find_list (Gtk.Widget widget) {
-    if (widget is Gtk.ListBox) return (Gtk.ListBox) widget;
-    for (var child = widget.get_first_child (); child != null; child = child.get_next_sibling ()) {
-        var found = find_list (child);
-        if (found != null) return found;
-    }
-    return null;
-}
-
 Gtk.ListView? find_media_list (Gtk.Widget widget) {
     if (widget is Gtk.ListView) return (Gtk.ListView) widget;
     for (var child = widget.get_first_child (); child != null; child = child.get_next_sibling ()) {
@@ -133,21 +124,22 @@ Gtk.Widget? list_item (Gtk.ListView list, int index) {
     return bound_item (list, list.model.get_item ((uint) index));
 }
 uint selected_index (Gtk.ListView list) { return ((Gtk.SingleSelection) list.model).selected; }
+Gtk.Stack library_categories (Music.Window window) {
+    return (Gtk.Stack) find_named (window, "library-categories");
+}
 void show_songs (Music.Window window) {
-    var modes = find_list (find_named (window, "library"));
-    modes.select_row (modes.get_row_at_index (2));
+    ((Gtk.Button) find_named (window, "show-all-tracks")).clicked ();
     wait_for_layout (window);
 }
 void select_album (Gtk.Widget library, string artist, string album) {
     var window = (Music.Window) library.get_ancestor (typeof (Music.Window));
-    var modes = find_list (library);
-    modes.select_row (modes.get_row_at_index (0));
-    modes.row_activated (modes.get_row_at_index (0));
-    var grid = (Gtk.GridView) find_named (window, "album-grid");
-    for (uint i = 0; i < grid.model.get_n_items (); i++) {
-        var group = (Music.LibraryGroup) grid.model.get_item (i);
-        if (group.artist != artist || group.title != album) continue;
-        grid.activate (i);
+    library_categories (window).visible_child_name = "albums";
+    var albums = (Gtk.ListView) find_named (library, "sidebar-album-list");
+    for (uint i = 0; i < albums.model.get_n_items (); i++) {
+        var branch = (Gtk.TreeListRow) albums.model.get_item (i);
+        var group = branch.item as Music.LibraryGroup;
+        if (group == null || group.artist != artist || group.title != album) continue;
+        albums.activate (i);
         wait_for_layout (window);
         return;
     }
@@ -285,8 +277,24 @@ void test_visual_album_queue_actions () {
     var grid = (Gtk.GridView) find_named (window, "album-grid");
     var queue = (Gtk.ListView) find_named (window, "queue-list");
     var play = find_play (window);
+    var summary = find_named (window, "tracks").get_first_child ();
+    var cover = (Gtk.Image) summary.get_first_child ();
+    var actions = (Gtk.MenuButton) find_named (window, "library-actions");
     wait_for_layout (window);
     assert (grid.get_mapped () && grid.model.get_n_items () == 1);
+    var sidebar = (Gtk.ListView) find_named (window, "sidebar-album-list");
+    var thumbnail = (Gtk.Image) find_named (sidebar, "sidebar-album-cover");
+    var album_branch = (Gtk.TreeListRow) sidebar.model.get_item (0);
+    assert (sidebar.get_mapped () && album_branch.item == grid.model.get_item (0));
+    assert (!album_branch.expanded && sidebar.model.get_n_items () == 1);
+    album_branch.expanded = true;
+    assert (sidebar.model.get_n_items () == 3);
+    assert (((Music.Track) album_branch.get_child_row (0).item).title == "Primera");
+    assert (((Music.Track) album_branch.get_child_row (1).item).title == "Segunda");
+    assert (thumbnail.get_mapped () && thumbnail.get_width () == 40);
+    assert (thumbnail.get_paintable () is Gdk.Texture && has_text (sidebar, "Disco"));
+    assert (!grid.model.is_selected (0) && !cover.get_mapped ());
+    assert (actions.get_mapped () && actions.tooltip_text == "Acciones de la biblioteca");
     labeled_button (media_row (grid), "Agregar a la cola").clicked ();
     assert (queue.model.get_n_items () == 2 && play.icon_name == "media-playback-start-symbolic");
     assert (((Music.QueueEntry) queue.model.get_item (0)).track.number == 1);
@@ -324,17 +332,21 @@ void test_visual_album_queue_actions () {
         assert (grid.model.get_n_items () == 1);
         var group = (Music.LibraryGroup) grid.model.get_item (0);
         assert (group.tracks.length == (query == "primera" ? 1 : 2));
+        var matching_album = (Gtk.TreeListRow) sidebar.model.get_item (0);
+        assert (matching_album.expanded && matching_album.children.get_n_items () == group.tracks.length);
     }
     grid.activate (0);
     wait_for_layout (window);
     var back = (Gtk.Button) find_named (window, "library-back");
     assert (back.get_mapped ());
+    assert (cover.get_mapped () && cover.get_paintable () is Gdk.Texture);
+    assert (actions.tooltip_text == "Acciones del álbum");
     back.clicked ();
     wait_for_layout (window);
     assert (grid.get_mapped () && !back.get_mapped ());
     search.text = "sin coincidencias";
     search.search_changed ();
-    assert (grid.model.get_n_items () == 0 && has_text (window, "Sin resultados"));
+    assert (grid.model.get_n_items () == 0 && has_text (window, "Sin resultados") && !actions.visible);
     close_and_flush (window);
     foreach (string file in new string[] {"one.flac", "two.flac", "cover.jpg"}) FileUtils.unlink (folder + "/" + file);
     remove_fixture (folder);
@@ -431,7 +443,7 @@ void test_adaptive_overlays_restore_proportions () {
     wait_until (() => { return !window.loading; });
     wait_for_layout (window);
     var left = find_named (window, "library");
-    var right = find_named (window, "details");
+    var right = find_named (window, "queue-panel");
     var panels = (Gtk.Paned) left.get_ancestor (typeof (Gtk.Paned));
     var inner = (Gtk.Paned) right.get_ancestor (typeof (Gtk.Paned));
     panels.position = 300;
@@ -443,14 +455,35 @@ void test_adaptive_overlays_restore_proportions () {
     wait_for_layout (window);
     assert (window.get_surface ().get_width () == 1024 && window.get_surface ().get_height () == 600);
     var show_library = (Gtk.Button) find_named (window, "show-library");
-    var show_details = (Gtk.Button) find_named (window, "show-details");
-    assert (show_library.get_mapped () && show_details.get_mapped ());
+    var show_queue = (Gtk.Button) find_named (window, "show-queue");
+    assert (show_library.get_mapped () && show_queue.get_mapped ());
     assert (left.get_ancestor (typeof (Gtk.Paned)) == null);
     assert (right.get_ancestor (typeof (Gtk.Paned)) == null);
     show_library.clicked ();
     wait_until (() => { return ((Adw.OverlaySplitView) left.get_ancestor (typeof (Adw.OverlaySplitView))).show_sidebar; });
+    var categories = library_categories (window);
+    categories.visible_child_name = "artists";
+    wait_for_layout (window);
+    var artists = find_named (left, "artist-list");
+    assert (artists.get_mapped () && ((Adw.OverlaySplitView) left.get_ancestor (typeof (Adw.OverlaySplitView))).show_sidebar);
+    assert (find_visible_label (artists, "Artista desconocido") != null);
+    ((Gtk.ListView) artists).activate (0);
+    assert (((Adw.OverlaySplitView) left.get_ancestor (typeof (Adw.OverlaySplitView))).show_sidebar);
+    var tabs = find_named (left, "library-tabs");
+    var viewport = tabs.get_ancestor (typeof (Gtk.ScrolledWindow));
+    var tabs_bounds = bounds_in (tabs, viewport);
+    assert (tabs_bounds.get_x () >= 0 && tabs_bounds.get_x () + tabs_bounds.get_width () <= viewport.get_width ());
+    var settings = Gtk.Settings.get_default ();
+    string original_font = settings.gtk_font_name;
+    settings.gtk_font_name = "Sans 18";
+    wait_for_layout (window);
+    tabs_bounds = bounds_in (tabs, viewport);
+    assert (tabs_bounds.get_x () >= 0 && tabs_bounds.get_x () + tabs_bounds.get_width () <= viewport.get_width ());
+    capture_if_requested (window, "-1024-sidebar-large-text");
+    settings.gtk_font_name = original_font;
+    categories.visible_child_name = "albums";
     show_library.clicked ();
-    show_details.clicked ();
+    show_queue.clicked ();
     wait_for_layout (window);
     var toggle = (Adw.OverlaySplitView) right.get_ancestor (typeof (Adw.OverlaySplitView));
     assert (toggle.show_sidebar);
@@ -460,8 +493,6 @@ void test_adaptive_overlays_restore_proportions () {
         return q.get_x () >= 0 && q.get_x () + q.get_width () <= window.get_width ();
     });
     capture_if_requested (window, "-1024");
-    var settings = Gtk.Settings.get_default ();
-    string original_font = settings.gtk_font_name;
     settings.gtk_font_name = "Sans 18";
     wait_for_layout (window);
     assert (window.get_surface ().get_width () == 1024 && window.get_surface ().get_height () == 600);
@@ -493,18 +524,18 @@ void test_initial_empty_states_survive_navigation () {
     ((Gtk.Button) find_named (preferences, "cancel")).clicked ();
     wait_until (() => { return !window.loading; });
     preferences.close ();
-    var modes = find_list (find_named (window, "library"));
-    foreach (int page in new int[] {0, 1, 2}) {
-        modes.select_row (modes.get_row_at_index (page));
+    var modes = library_categories (window);
+    foreach (string page in new string[] {"albums", "artists"}) {
+        modes.visible_child_name = page;
         assert (has_text (window, "Carga cancelada"));
         assert (!has_text (window, "La música aparecerá aquí al terminar la carga"));
     }
     window.load_library.begin (folder + "/missing");
-    modes.select_row (modes.get_row_at_index (0));
+    modes.visible_child_name = "albums";
     assert (has_text (window, "Leyendo biblioteca…"));
     wait_until (() => { return !window.loading; });
-    foreach (int page in new int[] {1, 2, 0}) {
-        modes.select_row (modes.get_row_at_index (page));
+    foreach (string page in new string[] {"artists", "albums"}) {
+        modes.visible_child_name = page;
         assert (has_text (window, "No se pudo cargar la biblioteca"));
         assert (!has_text (window, "Biblioteca vacía"));
     }
@@ -598,6 +629,19 @@ void test_native_pointer_drag () {
         var focus = window.get_focus ();
         return focus != null && (focus == search || focus.is_ancestor (search));
     });
+    Test.message ("Ctrl+F focused the search entry");
+    window.set_default_size (1024, 600);
+    wait_for_layout (window);
+    var queue_panel = find_named (window, "queue-panel");
+    var queue_overlay = (Adw.OverlaySplitView) queue_panel.get_ancestor (typeof (Adw.OverlaySplitView));
+    assert (!queue_overlay.show_sidebar);
+    foreach (bool open in new bool[] {true, false}) {
+        Test.message ("F9 should %s the compact queue", open ? "open" : "close");
+        // In Xvfb, xdotool's symbolic F9 injects Alt. Send its unmodified keycode.
+        try { Process.spawn_async (null, {"xdotool", "key", "75"}, null, SpawnFlags.SEARCH_PATH, null, null); }
+        catch (Error e) { error ("%s", e.message); }
+        wait_until (() => { return queue_overlay.show_sidebar == open; });
+    }
     close_and_flush (window);
     remove_fixture (folder);
 }
@@ -625,12 +669,14 @@ int main (string[] args) {
         });
         app.activate ();
         assert (window.visible);
-        foreach (string zone in new string[] {"library", "tracks", "details", "controls"})
+        foreach (string zone in new string[] {"library", "tracks", "queue-panel", "controls"})
             assert (find_named (window, zone) != null);
         foreach (string control in new string[] {"location", "load", "apply", "cancel", "browse", "reload"})
             assert (find_named (window, control) == null);
         assert (find_named (window, "library-search") is Gtk.SearchEntry);
         assert (find_named (window, "open-preferences") != null);
+        var queue_panel = find_named (window, "queue-panel");
+        assert (has_text (queue_panel, "Cola") && !has_text (queue_panel, "Datos"));
         wait_until (() => { return !window.loading && window.track_count == 1; });
         assert (new Music.LocationSettings (config).load () == File.new_for_path (folder).get_uri ());
         wait_for_layout (window);
@@ -1140,7 +1186,7 @@ int main (string[] args) {
         show_songs (window);
         show_songs (window);
         var tracks = find_media_list (find_named (window, "tracks"));
-        var queue = find_media_list (find_named (window, "details"));
+        var queue = find_media_list (find_named (window, "queue-panel"));
         var title = (Gtk.Label) find_named (window, "now-playing");
         var play = find_play (window);
         assert (tracks.single_click_activate);
@@ -1156,7 +1202,7 @@ int main (string[] args) {
         tracks.activate (0);
         wait_until (() => { return title.label.has_prefix ("song\n"); });
         assert (queue.model.get_n_items () == 2);
-        assert (has_text (find_named (window, "details"), "track-two"));
+        assert (has_text (find_named (window, "queue-panel"), "track-two"));
         ((Gtk.SingleSelection) queue.model).selected = 1;
         queue.activate (1);
         wait_until (() => { return title.label.has_prefix ("song\n") && play.icon_name == "media-playback-pause-symbolic"; });
@@ -1209,11 +1255,9 @@ int main (string[] args) {
         var preferences = open_preferences (window);
         assert (has_text (preferences, "0 pistas cargadas · 0 archivos de audio omitidos"));
         preferences.close ();
-        var stack = (Gtk.Stack) find_media_list (find_named (window, "details")).get_ancestor (typeof (Gtk.Stack));
-        stack.visible_child_name = "queue";
-        wait_for_layout (stack);
+        wait_for_layout (find_named (window, "queue-panel"));
         var placeholder = find_named (window, "queue-empty");
-        assert (placeholder is Adw.StatusPage && placeholder.get_mapped ());
+        assert (placeholder.get_mapped ());
         assert (has_text (placeholder, "Cola vacía"));
         assert (has_text (placeholder, "Agregá música desde la biblioteca"));
         window.load_library.begin (folder + "/unavailable");
@@ -1248,7 +1292,6 @@ int main (string[] args) {
         window.present ();
         wait_until (() => { return !window.loading && window.track_count == 2; });
         show_songs (window);
-        var groups = find_list (find_named (window, "library"));
         show_songs (window);
         var tracks = find_media_list (find_named (window, "tracks"));
         var play = find_play (window);
@@ -1257,11 +1300,12 @@ int main (string[] args) {
         // Filter to the original WAV's album, leaving one playable visible track.
         select_album (find_named (window, "library"), "Artista desconocido", "Sin álbum");
         assert (list_item (tracks, 1) == null);
-        assert (has_text (find_named (window, "tracks"), "Sin álbum — Artista desconocido · 1 pista"));
+        assert (has_text (find_named (window, "tracks"), "Sin álbum"));
+        assert (has_text (find_named (window, "tracks"), "Artista desconocido · 1 pista"));
         assert (play.sensitive && !previous.sensitive && !next.sensitive);
         tracks.activate (0);
         wait_until (() => { return play.icon_name == "media-playback-pause-symbolic"; });
-        groups.select_row (groups.get_row_at_index (2));
+        show_songs (window);
         assert (list_item (tracks, 1) != null);
         // The active queue is still the single-track selection, not the newly visible group.
         assert (play.sensitive && !previous.sensitive && !next.sensitive);
@@ -1306,37 +1350,57 @@ int main (string[] args) {
         wait_until (() => { return has_text (preferences, "Fin de la cola"); });
         assert (play.icon_name == "media-playback-start-symbolic");
         assert (previous.sensitive && play.sensitive && !next.sensitive);
-        assert (selected_index (find_media_list (find_named (window, "details"))) == 1);
+        assert (selected_index (find_media_list (find_named (window, "queue-panel"))) == 1);
         close_and_flush (window);
         FileUtils.unlink (folder + "/track-two.wav");
         remove_fixture (folder);
     });
     Test.add_func ("/ui/artist-navigation-opens-albums", () => {
-        string folder = fixture ();
+        string folder = fixture ("8");
         try {
             string[] command = {"ffmpeg", "-v", "error", "-i", folder + "/song.wav",
-                "-metadata", "artist=Banda de prueba", "-metadata", "album=Primer álbum",
+                "-metadata", "artist=Banda de prueba", "-metadata", "album=Primer álbum", "-metadata", "title=Tema de prueba",
                 "-y", folder + "/album.flac"};
             int status;
             Process.spawn_sync (null, command, null, SpawnFlags.SEARCH_PATH, null, null, null, out status);
             assert (status == 0);
         } catch (Error e) { error ("%s", e.message); }
         assert (FileUtils.unlink (folder + "/song.wav") == 0);
-        var window = new Music.Window (application (), folder + "/settings.ini", Gst.ElementFactory.make ("fakesink", null));
+        var sink = Gst.ElementFactory.make ("fakesink", null);
+        sink.set ("sync", true);
+        var window = new Music.Window (application (), folder + "/settings.ini", sink);
         window.present ();
         wait_until (() => { return !window.loading && window.track_count == 1; });
         var library = find_named (window, "library");
-        var modes = find_list (library);
-        modes.select_row (modes.get_row_at_index (1));
+        library_categories (window).visible_child_name = "artists";
         var artists = (Gtk.ListView) find_named (window, "artist-list");
         wait_for_layout (window);
         assert (artists.model.get_n_items () == 1);
-        assert (((Music.LibraryGroup) artists.model.get_item (0)).title == "Banda de prueba");
+        var artist = (Gtk.TreeListRow) artists.model.get_item (0);
+        assert (((Music.LibraryGroup) artist.item).title == "Banda de prueba");
         artists.activate (0);
+        assert (artist.expanded && artists.model.get_n_items () == 2);
         var grid = (Gtk.GridView) find_named (window, "album-grid");
         wait_for_layout (window);
         assert (grid.get_mapped () && grid.model.get_n_items () == 1);
-        assert (((Music.LibraryGroup) grid.model.get_item (0)).title == "Primer álbum");
+        var album = artist.get_child_row (0);
+        assert (album.item == grid.model.get_item (0));
+        assert (((Music.LibraryGroup) album.item).title == "Primer álbum" && album.depth == 1);
+        artists.activate (album.get_position ());
+        assert (album.expanded && artists.model.get_n_items () == 3);
+        var song = album.get_child_row (0);
+        assert (song.depth == 2 && ((Music.Track) song.item).title == "Tema de prueba");
+        window.set_default_size (1024, 600);
+        wait_for_layout (window);
+        ((Gtk.Button) find_named (window, "show-library")).clicked ();
+        var overlay = (Adw.OverlaySplitView) library.get_ancestor (typeof (Adw.OverlaySplitView));
+        assert (overlay.show_sidebar);
+        artists.activate (song.get_position ());
+        assert (!overlay.show_sidebar);
+        wait_until (() => { return find_play (window).icon_name == "media-playback-pause-symbolic"; });
+        assert (has_text (find_named (window, "controls"), "Tema de prueba"));
+        artists.activate (0);
+        assert (!artist.expanded && artists.model.get_n_items () == 1);
         close_and_flush (window);
         FileUtils.unlink (folder + "/album.flac");
         remove_fixture (folder);
@@ -1359,14 +1423,15 @@ int main (string[] args) {
         var window = new Music.Window (application (), folder + "/settings.ini", Gst.ElementFactory.make ("fakesink", null));
         window.present ();
         wait_until (() => { return !window.loading && window.track_count == 3; });
-        var modes = find_list (find_named (window, "library"));
-        modes.select_row (modes.get_row_at_index (1));
+        library_categories (window).visible_child_name = "artists";
         var artist_view = (Gtk.ListView) find_named (window, "artist-list");
-        assert (artist_view.model.get_n_items () == 2);
-        for (uint j = 0; j < artist_view.model.get_n_items (); j++) {
-            var artist = (Music.LibraryGroup) artist_view.model.get_item (j);
+        var artist_tree = (Gtk.TreeListModel) ((Gtk.SingleSelection) artist_view.model).model;
+        assert (artist_tree.model.get_n_items () == 2);
+        for (uint j = 0; j < artist_tree.model.get_n_items (); j++) {
+            var branch = artist_tree.get_child_row (j);
+            var artist = (Music.LibraryGroup) branch.item;
             assert (artist.tracks.length == (artist.title == artists[0] ? 2 : 1));
-            artist_view.activate (j);
+            artist_view.activate (branch.get_position ());
             var grid = (Gtk.GridView) find_named (window, "album-grid");
             assert (grid.model.get_n_items () == artist.tracks.length);
             for (uint k = 0; k < grid.model.get_n_items (); k++)
@@ -1409,17 +1474,16 @@ int main (string[] args) {
             for (int j = 0; j < titles.length; j++)
                 assert (has_text (tracks, titles[j]) == (i == j));
         }
-        var groups = find_list (library);
-        assert (groups != null && has_text (groups.get_row_at_index (2), "Canciones"));
-        groups.select_row (groups.get_row_at_index (2));
-        wait_for_layout (window);
+        var categories = library_categories (window);
+        assert (categories.pages.get_n_items () == 2 && categories.get_child_by_name ("songs") == null);
+        show_songs (window);
         assert (list_item (tracks, 2) != null && list_item (tracks, 3) == null);
         foreach (var title in titles) assert (has_text (tracks, title));
         close_and_flush (window);
         for (int i = 0; i < titles.length; i++) FileUtils.unlink (folder + "/track%d.flac".printf (i));
         remove_fixture (folder);
     });
-    Test.add_func ("/ui/givenAlbumSelected_whenPublicArtistPortraitLoads_thenShowsPortraitAndAttributionWithoutReplacingAlbumCover", () => {
+    Test.add_func ("/ui/artist-thumbnail-credits-and-album-cover", () => {
         string folder = fixture ("8");
         var server = new Soup.Server ("server-header", "ui-artist-photo-fixture", null);
         try {
@@ -1439,6 +1503,8 @@ int main (string[] args) {
             server.listen_local (0, Soup.ServerListenOptions.IPV4_ONLY);
             string uri = server.get_uris ().data.to_string ();
             string origin = uri.substring (0, uri.length - 1);
+            int portrait_downloads = 0;
+            Soup.ServerMessage? pending_portrait = null;
             server.add_handler (null, (local, message, path, query) => {
                 string body;
                 switch (path) {
@@ -1449,8 +1515,13 @@ int main (string[] args) {
                     body = """{"query":{"pages":{"123":{"pageid":123,"ns":6,"title":"File:Portrait.jpg","imageinfo":[{"url":"%s/original/Portrait.jpg","thumburl":"%s/portrait.jpg","descriptionurl":"%s/wiki/File:Portrait.jpg","extmetadata":{"Artist":{"value":"<a href=\"https://example.org/photographer\">Example &lt;Photographer&gt;</a>"},"LicenseShortName":{"value":"CC BY-SA 4.0"},"LicenseUrl":{"value":"https://creativecommons.org/licenses/by-sa/4.0/"}}}]}}}}""".printf (origin, origin, origin);
                     break;
                 case "/portrait.jpg":
+                    portrait_downloads++;
                     message.set_status (200, null);
                     message.set_response ("image/jpeg", Soup.MemoryUse.COPY, jpeg.get_data ());
+                    if (portrait_downloads == 1) {
+                        message.pause ();
+                        pending_portrait = message;
+                    }
                     return;
                 default:
                     message.set_status (404, null);
@@ -1465,59 +1536,58 @@ int main (string[] args) {
             Music.Window window = new Music.Window (application (), folder + "/settings.ini", sink, photos);
             window.present ();
             wait_until (() => { return !window.loading && window.track_count == 1; });
-            select_album (find_named (window, "library"), "Nina Simone", "Álbum de prueba");
-            var summary = find_named (window, "tracks").get_first_child ();
-            Gtk.Image? cover = summary.get_first_child () as Gtk.Image;
-            assert (cover != null);
-            Gdk.Texture? cover_texture = cover.get_paintable () as Gdk.Texture;
-            assert_nonnull (cover_texture);
-            assert (cover_texture.get_width () == 320 && cover_texture.get_height () == 320);
-            var details = find_named (window, "details");
-            ((Gtk.Stack) find_media_list (details).get_ancestor (typeof (Gtk.Stack))).visible_child_name = "data";
-            wait_for_layout (window);
-            Gtk.Widget? portrait = null;
+            assert (portrait_downloads == 0);
+            library_categories (window).visible_child_name = "artists";
+            var sidebar = (Gtk.ListView) find_named (window, "artist-list");
+            wait_until (() => { return pending_portrait != null; });
+            var placeholder = (Gtk.Image) find_named (sidebar, "sidebar-artist-placeholder");
+            assert (placeholder.get_mapped () && placeholder.storage_type == Gtk.ImageType.ICON_NAME);
+            sidebar.activate (0);
+            assert (selected_index (sidebar) == 0);
+            pending_portrait.unpause ();
             wait_until (() => {
-                portrait = find_named (details, "artist-portrait");
-                if (portrait is Gtk.Image) return ((Gtk.Image) portrait).get_paintable () is Gdk.Texture;
-                if (portrait is Gtk.Picture) return ((Gtk.Picture) portrait).paintable is Gdk.Texture;
-                return false;
+                var thumb = find_named (sidebar, "sidebar-artist-photo") as Gtk.Image;
+                return thumb != null && thumb.get_mapped () && thumb.get_paintable () is Gdk.Texture;
             });
             wait_for_layout (window);
-            Gdk.Paintable? portrait_paintable = null;
-            if (portrait is Gtk.Image) portrait_paintable = ((Gtk.Image) portrait).get_paintable ();
-            else portrait_paintable = ((Gtk.Picture) portrait).paintable;
-            var portrait_texture = (Gdk.Texture) portrait_paintable;
+            var thumbnail = (Gtk.Image) find_named (sidebar, "sidebar-artist-photo");
+            var portrait_texture = (Gdk.Texture) thumbnail.get_paintable ();
+            Test.message ("Portrait allocated at %d px after %d download(s)", thumbnail.get_width (), portrait_downloads);
+            assert (thumbnail.get_width () == 40 && portrait_downloads == 1);
             assert (portrait_texture.get_width () == 16 && portrait_texture.get_height () == 16);
-            assert (portrait.get_mapped ());
-            assert (portrait.get_width () > 0 && portrait.get_width () <= 320);
-            assert (portrait.get_height () > 0 && portrait.get_height () <= 320);
-            assert (find_visible_label (details, "Nina Simone") != null);
-            var author = find_visible_label (details, "Example <Photographer>");
+            assert (find_visible_label (sidebar, "Nina Simone") != null);
+            var credits = (Gtk.MenuButton) find_named (sidebar, "sidebar-photo-credits");
+            assert (credits.get_mapped () && credits.tooltip_text == "Créditos de la foto");
+            credits.popup ();
+            var popover = credits.popover;
+            wait_until (() => { return popover.get_mapped (); });
+            var author = find_visible_label (popover, "Example <Photographer>");
             assert (author != null && !author.use_markup);
-            var license = find_visible_link (details, "https://creativecommons.org/licenses/by-sa/4.0/");
-            var source = find_visible_link (details, origin + "/wiki/File:Portrait.jpg");
-            assert (license != null && license.sensitive && license.label.contains ("CC BY-SA 4.0"));
-            assert (source != null && source.sensitive && source.label.strip () != "");
-            assert (cover.get_paintable () == cover_texture && cover.get_mapped ());
-            assert (has_text (summary, "Álbum de prueba"));
-
+            var license = find_visible_link (popover, "https://creativecommons.org/licenses/by-sa/4.0/");
+            var source = find_visible_link (popover, origin + "/wiki/File:Portrait.jpg");
+            assert (license != null && license.sensitive && license.label == "CC BY-SA 4.0");
+            assert (source != null && source.sensitive && source.label == "Wikimedia Commons");
+            capture_if_requested (window);
+            credits.popdown ();
+            select_album (find_named (window, "library"), "Nina Simone", "Álbum de prueba");
+            var summary = find_named (window, "tracks").get_first_child ();
+            var cover = (Gtk.Image) summary.get_first_child ();
+            var cover_texture = cover.get_paintable () as Gdk.Texture;
+            assert (cover.get_mapped () && cover_texture != null);
+            assert (cover_texture.get_width () == 320 && cover_texture.get_height () == 320);
             var tracks = find_media_list (find_named (window, "tracks"));
             tracks.activate (0);
             wait_until (() => { return find_play (window).icon_name == "media-playback-pause-symbolic"; });
             assert (has_text (find_named (window, "controls"), "Pista de prueba"));
-            assert (find_visible_label (details, "Pista de prueba") != null);
-            assert (find_visible_label (details, "Artista:") != null);
-            assert (find_visible_label (details, "Álbum de prueba") != null);
-            assert (portrait.get_mapped () && author.get_mapped () && license.get_mapped () && source.get_mapped ());
-            assert (cover.get_paintable () == cover_texture && cover.get_mapped ());
+            assert (cover.get_paintable () == cover_texture && portrait_downloads == 1);
             close_and_flush (window);
-        } catch (Error e) { error ("Retrato en Datos: %s", e.message); }
+        } catch (Error e) { error ("Créditos de miniatura: %s", e.message); }
         server.disconnect ();
         FileUtils.unlink (folder + "/album.flac");
         FileUtils.unlink (folder + "/cover.jpg");
         remove_fixture (folder);
     });
-    Test.add_func ("/ui/givenArtistPhotoLoading_whenAnotherArtistSelectedAndDownloadFails_thenPreviousPortraitAndCreditsDoNotReappear", () => {
+    Test.add_func ("/ui/artist-thumbnail-stale-response-after-filter", () => {
         string folder = fixture ("8");
         var server = new Soup.Server ("server-header", "ui-delayed-portrait-fixture", null);
         try {
@@ -1567,44 +1637,32 @@ int main (string[] args) {
                 new Music.ArtistPhotos.for_test_server (origin));
             window.present ();
             wait_until (() => { return !window.loading && window.track_count == 2; });
-        show_songs (window);
-            var library = find_named (window, "library");
-            var details = find_named (window, "details");
-            ((Gtk.Stack) find_media_list (details).get_ancestor (typeof (Gtk.Stack))).visible_child_name = "data";
-            wait_for_layout (window);
-            select_album (library, artists[0], "Álbum de prueba");
+            var search = (Gtk.SearchEntry) find_named (window, "library-search");
+            search.text = artists[0];
+            search.search_changed ();
+            library_categories (window).visible_child_name = "artists";
+            var sidebar = find_named (window, "artist-list");
             wait_until (() => { return delayed != null; });
-            assert (find_visible_label (details, "Buscando retrato público") != null);
-
-            select_album (library, artists[1], "Álbum de prueba");
-            assert (find_visible_label (details, artists[1]) != null);
+            search.text = artists[1];
+            search.search_changed ();
+            wait_for_layout (window);
+            assert (find_visible_label (sidebar, artists[1]) != null);
             delayed.unpause ();
-            wait_until (() => {
-                return failed_download && find_visible_label (details, "No se pudo cargar el retrato") != null;
-            });
-            // Give queued responses and rendering a bounded opportunity to surface stale content.
+            wait_until (() => { return failed_download; });
+            // Let the failure finish and render the recycled row.
             bool settled = false;
             Timeout.add (150, () => { settled = true; return Source.REMOVE; });
             wait_until (() => { return settled; });
             wait_for_layout (window);
-            var portrait = find_named (details, "artist-portrait") as Gtk.Image;
-            assert (portrait != null && portrait.get_mapped ());
-            assert (portrait.get_paintable () == null);
-            assert (portrait.storage_type == Gtk.ImageType.ICON_NAME);
-            assert (portrait.icon_name == "avatar-default-symbolic");
-            assert (find_visible_label (details, artists[1]) != null);
-            assert (find_visible_label (details, artists[0]) == null);
-            assert (find_visible_label (details, "Fotógrafo de A") == null);
-            for (var child = portrait.get_parent ().get_first_child (); child != null; child = child.get_next_sibling ()) {
-                if (child is Gtk.LinkButton) assert (!child.get_mapped () && !child.visible);
-            }
+            var placeholder = (Gtk.Image) find_named (sidebar, "sidebar-artist-placeholder");
+            assert (placeholder.get_mapped () && placeholder.icon_name == "avatar-default-symbolic");
+            assert (find_visible_label (sidebar, artists[0]) == null);
+            var credits = find_named (sidebar, "sidebar-photo-credits");
+            assert (credits == null || !credits.get_mapped ());
+            select_album (find_named (window, "library"), artists[1], "Álbum de prueba");
             find_media_list (find_named (window, "tracks")).activate (0);
             wait_until (() => { return find_play (window).icon_name == "media-playback-pause-symbolic"; });
             assert (has_text (find_named (window, "controls"), "Pista de " + artists[1]));
-            assert (window.get_mapped () && window.sensitive);
-            assert (portrait.get_paintable () == null);
-            assert (find_visible_label (details, "Fotógrafo de A") == null);
-            Test.message ("A's JPEG released after selecting B; B's JPEG returned HTTP 503; B keeps neutral portrait, no credits, and plays");
             close_and_flush (window);
         } catch (Error e) { error ("Cambio de artista durante descarga: %s", e.message); }
         server.disconnect ();
@@ -1783,12 +1841,12 @@ int main (string[] args) {
         var preferences = open_preferences (window);
         assert (has_text (preferences, "2 pistas cargadas · 2 archivos de audio omitidos"));
         preferences.close ();
-        assert (has_text (find_named (window, "tracks"), "Todas las pistas · 2 pistas"));
+        assert (has_text (find_named (window, "tracks"), "Todas las pistas"));
+        assert (has_text (find_named (window, "tracks"), "2 pistas"));
         select_album (find_named (window, "library"), "Artista desconocido", "Sin álbum");
-        assert (has_text (find_named (window, "tracks"), "Sin álbum — Artista desconocido · 2 pistas"));
-        var stack = (Gtk.Stack) find_media_list (find_named (window, "details")).get_ancestor (typeof (Gtk.Stack));
-        stack.visible_child_name = "queue";
-        wait_for_layout (stack);
+        assert (has_text (find_named (window, "tracks"), "Sin álbum"));
+        assert (has_text (find_named (window, "tracks"), "Artista desconocido · 2 pistas"));
+        wait_for_layout (find_named (window, "queue-panel"));
         var placeholder = find_named (window, "queue-empty");
         assert (placeholder.get_mapped ());
         assert (has_text (placeholder, "Agregá música desde la biblioteca"));
@@ -1821,7 +1879,8 @@ int main (string[] args) {
         assert (!has_text (window, "pistas cargadas"));
         assert (!has_text (window, "pista cargada"));
         assert (!has_text (window, "audio omitidos"));
-        assert (has_text (find_named (window, "tracks"), "Todas las pistas · 1 pista"));
+        assert (has_text (find_named (window, "tracks"), "Todas las pistas"));
+        assert (has_text (find_named (window, "tracks"), "1 pista"));
         assert (!has_text (find_named (window, "tracks"), "1 pistas"));
         capture_if_requested (window);
         close_and_flush (window);
@@ -2310,7 +2369,7 @@ int main (string[] args) {
         close_and_flush (window);
         remove_fixture (folder);
     });
-    Test.add_func ("/ui/tracks-details-free-width", () => {
+    Test.add_func ("/ui/tracks-queue-free-width", () => {
         string folder = fixture ();
         var window = new Music.Window (application (), folder + "/settings.ini", Gst.ElementFactory.make ("fakesink", null));
         window.present ();
@@ -2350,7 +2409,7 @@ int main (string[] args) {
         show_songs (window);
         var library = find_named (window, "library");
         var tracks = find_named (window, "tracks");
-        var details = find_named (window, "details");
+        var queue_panel = find_named (window, "queue-panel");
         var outer = (Gtk.Paned) library.get_ancestor (typeof (Gtk.Paned));
         var inner = (Gtk.Paned) tracks.get_ancestor (typeof (Gtk.Paned));
         var play = find_play (window);
@@ -2361,11 +2420,13 @@ int main (string[] args) {
         foreach (int width in new int[] {1280, 1600}) {
             window.set_default_size (width, 800);
             wait_for_layout (window);
-            var tabs = bounds_in (details.get_first_child (), inner.end_child);
-            Test.message ("Initial details at %d: tabs end=%.0f, panel width=%d", width,
-                tabs.get_x () + tabs.get_width (), inner.end_child.get_width ());
-            assert (tabs.get_x () >= 0);
-            assert (tabs.get_x () + tabs.get_width () <= inner.end_child.get_width ());
+            var toolbar = bounds_in (queue_panel.get_first_child (), inner.end_child);
+            var library_tabs = bounds_in (find_named (library, "library-tabs"), outer.start_child);
+            assert (library_tabs.get_x () >= 0 && library_tabs.get_x () + library_tabs.get_width () <= outer.start_child.get_width ());
+            Test.message ("Initial queue at %d: toolbar end=%.0f, panel width=%d", width,
+                toolbar.get_x () + toolbar.get_width (), inner.end_child.get_width ());
+            assert (toolbar.get_x () >= 0);
+            assert (toolbar.get_x () + toolbar.get_width () <= inner.end_child.get_width ());
             capture_if_requested (window, "-initial-%d".printf (width));
             int initial_outer = outer.position;
             int initial_inner = inner.position;
@@ -2416,11 +2477,11 @@ int main (string[] args) {
                 assert (window.track_count == 1);
                 assert (find_named (window, "library") == library);
                 assert (find_named (window, "tracks") == tracks);
-                assert (find_named (window, "details") == details);
-                assert (has_text (library, "Canciones"));
+                assert (find_named (window, "queue-panel") == queue_panel);
+                assert (has_text (library, "Álbumes") && has_text (library, "Artistas"));
+                assert (!has_text (library, "Canciones"));
                 assert (has_text (tracks, "song"));
-                assert (has_text (details, "Artista:"));
-                assert (has_text (details, "song"));
+                assert (has_text (queue_panel, "song"));
                 capture_if_requested (window, "-restored-%d".printf (width));
             }
         }

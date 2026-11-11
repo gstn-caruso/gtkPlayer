@@ -2,9 +2,9 @@
 
 ## Política acordada
 
-Regla general; la única excepción autorizada para el bootstrap inicial se
-registra abajo. No constituye aprobación HIG ni cambia esta política para
-integraciones posteriores.
+Las excepciones puntuales autorizadas se registran en este documento.
+La revisión HIG continúa pendiente en los incrementos indicados y la
+política general rige las integraciones posteriores.
 
 1. Trabajar en una rama `feat/<tema>` por funcionalidad; no desarrollar directo
    en `main`. Para correcciones se puede usar `fix/<tema>`. Un escritor por
@@ -165,3 +165,29 @@ siguientes integraciones. La lógica del job `release` fue revisada por lectura,
 pero al corte no ejecutada: ni el verde de feature branch ni las comprobaciones
 locales demuestran publicación remota o idempotencia real de la API de GitHub;
 el reintento sin reemplazos tampoco se da por verificado.
+
+## Integración del árbol de biblioteca y la cola — 2026-11-10
+
+El usuario pidió «mergea todo a main ok» después de revisar los cambios de
+esta sesión. Se registra su autorización puntual para integrar el pulido
+visual, las listas con miniaturas, las ramas artista → álbum → canciones y
+álbum → canciones, y la cola como único panel derecho. Los créditos de los
+retratos se consultan desde su miniatura. La autorización incluye el flujo
+existente que publica un prerelease experimental al integrar en `main`.
+
+La [matriz HIG](gnome-hig.md#cola-como-único-panel-derecho--2026-11-10)
+registra las comprobaciones y sus límites. HIG, nombre, icono propio,
+licencia, titular y contacto continúan pendientes. Se mantiene la exigencia
+de CI verde del commit de fuente y del PR antes del merge.
+
+Al iniciar este encargo, `main` ya existe en
+`234d33366c8542377ab6fc1107f2430a25b57545`, merge del
+[PR #1](https://github.com/gstn-caruso/gtkPlayer/pull/1), con
+[CI y prerelease exitosos](https://github.com/gstn-caruso/gtkPlayer/actions/runs/42929111344).
+Ese merge anterior registra su propia autorización puntual. Los cortes
+históricos de octubre conservan su fecha y alcance.
+
+Para este incremento, se publicará la fuente en la feature branch y se
+abrirá un PR hacia `main`. Tras CI verde se integrará y se comprobarán el
+run de `main`, el tag, el SHA objetivo y los checksums de sus assets. Esta
+excepción se limita a los cambios revisados en esta sesión.

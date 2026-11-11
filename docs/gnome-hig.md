@@ -523,3 +523,102 @@ integración, push ni release de este incremento.
 [visual-grid]: https://developer.gnome.org/hig/patterns/containers/grid-views.html
 [visual-lists]: https://developer.gnome.org/hig/patterns/containers/list-column-views.html
 [visual-search]: https://developer.gnome.org/hig/patterns/nav/search.html
+
+## Pulido visual de biblioteca y cola — 2026-11-10
+
+Cambios locales en `feat/visual-library-editable-queue`. La jerarquía visual,
+los tamaños de carátula y la intensidad del degradado son decisiones de
+diseño de esta app. Los controles nativos, el castellano y los separadores
+arrastrables siguen presentes.
+
+| Cambio y pauta | Evidencia | Próxima comprobación |
+| --- | --- | --- |
+| Biblioteca y detalle ([grillas][visual-grid], [listas][visual-lists], [tipografía][visual-typography], [estilo][style]) | `src/browser.vala` y `src/window.vala` alinean carátula y metadatos. La grilla abre álbumes sin preselección y reduce columnas al aumentar la fuente. Solo el detalle del álbum usa carátula grande. Artista y cantidad quedan debajo del título y el menú de acciones explicita su alcance en el nombre accesible. El degradado del álbum conserva el fondo del tema y se desactiva en alto contraste. `/ui/visual-album-queue-actions-search-artwork` comprueba activación, carátula, búsqueda y disponibilidad del menú. | Revisar foco al volver a la grilla, títulos largos, carátulas rectangulares y contraste con más bibliotecas y temas reales. Las pautas de ordenación por encabezado quedan fuera porque estas vistas carecen de columnas con encabezados. |
+| Cola y barra de reproducción ([vacíos][empty], [estilo][style], [nombres][names]) | La cola vacía conserva título y guía contextual junto con un símbolo de 32 px. Importación, vaciado y deshacer comparten una fila de controles nativos con nombre accesible. Las carátulas ausentes usan un símbolo pequeño y mantienen el espacio de la imagen en grilla, detalle y barra de reproducción. `/ui/empty-library-queue-and-load-failure-guidance` y los casos de arrastre verifican el estado vacío y su uso como destino. | Escuchar con lector la guía, el cambio de cola vacía a poblada y los controles de importación. Revisar carátulas faltantes e inválidas con temas del escritorio. La ilustración de bienvenida queda fuera: es un estado recurrente del panel de cola. |
+| Adaptación y teclado ([adaptación][adaptive], [paneles][panes], [teclado][keyboard], [accesibilidad][a11y-tests]) | `/ui/adaptive-overlays-restore-proportions` comprueba los paneles a 1024×600 y la recuperación de proporciones. Se inspeccionaron capturas de biblioteca y detalle a 1280×800 en claro y oscuro y de biblioteca y cola desplegada a 1024×600 con Sans 18 y alto contraste. | Recorrer ambos paneles, sus menús, el foco y los separadores con teclado y lector en una sesión GNOME real. Repetir con teclado en pantalla y escalado del sistema. |
+
+Compilación local correcta. Pasaron **74/74 casos** en claro (23 core, 45 UI,
+6 retratos) y **45/45 UI** en oscuro, con la prueba de puntero X11 habilitada
+en ambos temas. Registros en `build/visual-polish-light.log` y
+`build/visual-polish-dark-direct.log`. Las suites UI usaron Xvfb, Cairo,
+`fakesink` y `GTK_A11Y=none`.
+
+En una prueba aparte con Xvfb y AT-SPI activo, Ctrl+F, Tab y Enter abrieron el
+primer álbum. El árbol expuso «Acciones de la biblioteca», «Acciones del
+álbum», «Cola vacía», «Agregar archivos a la cola…», título, artista y cantidad.
+El foco quedó en el contenedor desplazable al abrir el álbum. Quedan por
+comprobar el foco al volver y la locución en Orca durante el recorrido
+completo. Capturas y registros en `build/visual-polish-demo/`, con ocho álbumes
+ficticios y audio de prueba. **HIG NO APROBADO**.
+
+[visual-typography]: https://developer.gnome.org/hig/guidelines/typography.html
+
+## Listas de álbumes y artistas en la columna izquierda — 2026-11-10
+
+Cambios locales en `feat/visual-library-editable-queue`.
+
+| Cambio y pauta | Evidencia | Próxima comprobación |
+| --- | --- | --- |
+| Navegación lateral ([barras laterales][library-sidebars], [listas][visual-lists], [nombres][names]) | La columna usa dos pestañas y listas GTK reutilizables. Cada álbum muestra carátula, título y artista para distinguir homónimos. Cada artista muestra nombre y retrato. Abrir un álbum muestra sus canciones en el centro y abrir un artista filtra allí la grilla. La vista de todas las pistas se conserva en el menú de la biblioteca. La búsqueda filtra los dos modelos. Los casos de álbumes homónimos y nombres Unicode comprueban que la identidad se conserva. El selector de vistas de nivel superior queda fuera: las pestañas conmutan el índice dentro de la barra lateral. | Recorrer pestañas, filas, detalle y botón Volver con Orca y solo teclado. Comprobar el foco después de buscar y de una actualización del origen. |
+| Carátulas y retratos ([listas][visual-lists], [tipografía][visual-typography], [estilo][style]) | La lista comparte los álbumes con la grilla y usa las carátulas locales o su símbolo genérico. Los retratos de Wikimedia se piden de a uno para filas visibles en Artistas. La prueba loopback pausa el JPEG, activa el artista mientras llega y verifica que la miniatura y Datos reutilizan una sola descarga, con autor y licencia. Si falta un retrato, se conserva el avatar genérico. | Probar desplazamiento rápido, biblioteca grande, respuestas lentas y vuelta a una pestaña tras un fallo. Escuchar los nombres y el acceso a los créditos desde Datos. |
+| Panel redimensionable ([adaptación][adaptive], [teclado][keyboard], [accesibilidad][a11y-tests]) | Las pestañas entran en el ancho inicial. En modo compacto, cambiar de pestaña mantiene abierto el panel y abrir una fila lo cierra para mostrar el detalle. `/ui/adaptive-overlays-restore-proportions` comprueba el panel a 1024×600 con Sans 18 y recupera proporciones tras volver a 1600 px. | Probar el cambio de pestaña, el recorrido de foco y el arrastre de ambos separadores con escalado del sistema en GNOME. |
+
+Los títulos admiten hasta dos líneas. En GTK 4.12 o posterior la lista
+asigna el nombre del artista o el título y artista del álbum al nombre
+accesible de la fila. En GTK 4.10 se conservan las etiquetas de texto de sus
+hijos; queda por verificar su locución con Orca.
+
+Pasaron **74/74 casos** en claro (23 core, 45 UI y 6 retratos) y **45/45 UI**
+en oscuro, incluidos los eventos de puntero X11. El caso de adaptación
+también pasó con alto contraste y texto grande. En una prueba aparte con
+Xvfb, teclado y AT-SPI, Tab recorrió las dos pestañas hasta la fila
+«Amy Winehouse» y Enter abrió sus álbumes. Registros en
+`build/sidebar-{light,dark,high-contrast}.log` y
+`build/sidebar-preview/keyboard.log`.
+
+Capturas locales en `build/sidebar-preview/` con audio y carátulas de prueba.
+En la muestra de Artistas se observaron retratos públicos de
+[Amy Winehouse, Rama, CC BY-SA 2.0 FR][sidebar-amy],
+[Charly García, dandrez, CC BY-SA 2.0][sidebar-charly] y
+[Divididos, Elemaki, CC BY 3.0][sidebar-divididos].
+La cobertura pública depende de los datos de Wikimedia. **HIG NO APROBADO**.
+
+[library-sidebars]: https://developer.gnome.org/hig/patterns/nav/sidebars.html
+[sidebar-amy]: https://commons.wikimedia.org/wiki/File:Amy_Winehouse_f4962007_crop.jpg
+[sidebar-charly]: https://commons.wikimedia.org/wiki/File:Charly_Garc%C3%ADa_%26_the_Prostitution_at_Cosqu%C3%ADn_Rock_12.02.2011_(5449800300).jpg
+[sidebar-divididos]: https://commons.wikimedia.org/wiki/File:Divididos.JPG
+
+## Ramas desplegables en la biblioteca — 2026-11-10
+
+Cambios locales en `feat/visual-library-editable-queue`.
+
+| Cambio y pauta | Evidencia | Próxima comprobación |
+| --- | --- | --- |
+| Jerarquía lateral ([barras laterales][library-sidebars], [listas][visual-lists]) | `Gtk.TreeListModel` y [`Gtk.TreeExpander`][library-tree-expander] muestran álbum → canciones y artista → álbumes → canciones. Las ramas se crean al desplegar y las filas son reutilizables. Álbumes homónimos mantienen la identidad exacta de su artista. La grilla central comparte el modelo de álbumes del artista. `/ui/visual-album-queue-actions-search-artwork` verifica orden, búsqueda y conservación de la rama si el grupo sigue en los resultados. `/ui/artist-navigation-opens-albums` verifica los tres niveles y reproducción desde una canción. Las pautas de encabezados ordenables quedan fuera porque la barra lateral carece de esos encabezados. | Probar bibliotecas grandes, cambio de foco al actualizar y plegado de ramas con varios álbumes abiertos. |
+| Teclado y vista angosta ([teclado][keyboard], [adaptación][adaptive], [nombres][names], [accesibilidad][a11y-tests]) | La fila conserva nombre accesible donde GTK lo admite y el expansor gestiona su estado. En 1024×600 se conserva el panel abierto al desplegar y se cierra al reproducir una canción. `/ui/adaptive-overlays-restore-proportions` comprueba ambos separadores, proporciones, pestañas y texto grande. | Verificar la locución de nivel y estado con Orca y el foco al plegar o volver del detalle en GNOME con texto grande. |
+
+Pasaron **74/74 casos** en claro y **45/45 UI** en oscuro. El caso compacto
+pasó también con alto contraste y Sans 18. Una prueba X11 usó la flecha
+nativa para plegar un álbum y Tab, Enter y flecha abajo para desplegar un
+artista y su álbum. AT-SPI expuso el nombre y el estado expandido del botón
+de la rama. Capturas y registro en `build/sidebar-tree-preview/`.
+
+**HIG NO APROBADO**.
+
+[library-tree-expander]: https://docs.gtk.org/gtk4/class.TreeExpander.html
+
+## Cola como único panel derecho — 2026-11-10
+
+| Cambio y pauta | Evidencia | Próxima comprobación |
+| --- | --- | --- |
+| Cola ([paneles][panes], [adaptación][adaptive], [teclado][keyboard]) | El título «Cola» y su barra de acciones ocupan el panel derecho. Se retiraron el selector de pestañas y el panel Datos. En modo compacto, el botón «Mostrar cola» y F9 abren y cierran la superposición. Los casos de arrastre nativo y restauración de proporciones cubren importación, edición y ajuste manual. | Probar F9 y la vuelta del foco al cerrar la cola desde distintos controles en una sesión GNOME real. Las pautas de pestañas dejan de aplicar al panel derecho. |
+| Créditos ([popovers][portrait-popovers], [nombres][names], [accesibilidad][a11y-tests]) | La foto funciona como botón con nombre accesible. Su popover presenta el autor en texto plano y dos enlaces nativos a licencia y Commons. `/ui/artist-thumbnail-credits-and-album-cover` verifica los enlaces, la carátula y la reproducción. `/ui/artist-thumbnail-stale-response-after-filter` comprueba que una descarga tardía no cambia el avatar ni los créditos de otro artista. | Comprobar la lectura de créditos con Orca, el cierre con Esc y el retorno del foco en ventanas angostas. |
+
+Pasaron **74/74 casos** en claro y **45/45 UI** en oscuro. Se verificó F9 con
+eventos X11 en ambos sentidos y se inspeccionó la cola a 1024×600 con Sans 18
+y alto contraste. Registros en `build/queue-only-{light,dark,high-contrast}.log`
+y captura en `build/queue-only-preview/compact-1024-large-text.png`.
+
+**HIG NO APROBADO**.
+
+[portrait-popovers]: https://developer.gnome.org/hig/patterns/containers/popovers.html
