@@ -33,3 +33,9 @@
 - Estas instrucciones complementan las globales; salvo el encargo puntual
   registrado, no autorizan operaciones Git, publicaciones, instalaciones ni
   cambios de servicios automáticos.
+- **Autorización puntual del 2026-11-10:** el usuario pidió «mergea todo a main
+  ok» después de revisar el árbol de biblioteca y la cola como único panel
+  derecho. Autoriza integrar este incremento mediante PR y CI verde, con el
+  prerelease experimental que activa el workflow existente. El alcance y la
+  evidencia se registran en [la política de integración](docs/branches-and-releases.md#integración-del-árbol-de-biblioteca-y-la-cola--2026-11-10).
+  HIG, identidad y licencia continúan pendientes para este incremento.

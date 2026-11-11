@@ -2,10 +2,147 @@ namespace Music {
     public class LibraryGroup : Object {
         public string title;
         public string artist;
+        public ListStore? albums { get; private set; }
         private Track[] items = {};
         public unowned Track[] tracks { get { return items; } }
         public LibraryGroup (string title, string artist) { this.title = title; this.artist = artist; }
         public void add (Track track) { items += track; }
+
+        public void add_album (LibraryGroup album) {
+            if (albums == null) albums = new ListStore (typeof (LibraryGroup));
+            albums.append (album);
+        }
+
+        public ListModel sidebar_children () {
+            if (albums != null) return albums;
+            var songs = new ListStore (typeof (Track));
+            foreach (var track in items) songs.append (track);
+            return songs;
+        }
+
+        public Gdk.Texture? cover_artwork () {
+            foreach (var track in items) {
+                if (track.cover_data == null) continue;
+                try { return Gdk.Texture.from_bytes (track.cover_data); }
+                catch (Error e) { }
+            }
+            return null;
+        }
+    }
+
+    public class LibrarySidebarRow : Gtk.Box {
+        public LibraryGroup? artist_group { get; private set; }
+        public bool has_portrait { get; private set; }
+        private Gtk.Image image;
+        private Gtk.MenuButton? photo_button;
+        private Gtk.Image? portrait_image;
+        private Gtk.Label title;
+        private Gtk.Label subtitle;
+        public LibrarySidebarRow () {
+            Object (orientation: Gtk.Orientation.HORIZONTAL, spacing: 10);
+            margin_end = 6;
+            margin_top = margin_bottom = 4;
+            image = new Gtk.Image ();
+            image.set_size_request (40, 40);
+            image.valign = Gtk.Align.CENTER;
+            image.overflow = Gtk.Overflow.HIDDEN;
+            image.add_css_class ("gtkplayer-artwork");
+            append (image);
+            var text = new Gtk.Box (Gtk.Orientation.VERTICAL, 2);
+            text.hexpand = true;
+            text.valign = Gtk.Align.CENTER;
+            title = new Gtk.Label ("");
+            title.xalign = 0;
+            title.wrap = true;
+            title.wrap_mode = Pango.WrapMode.WORD_CHAR;
+            title.ellipsize = Pango.EllipsizeMode.END;
+            title.lines = 2;
+            text.append (title);
+            subtitle = new Gtk.Label ("");
+            subtitle.xalign = 0;
+            subtitle.ellipsize = Pango.EllipsizeMode.END;
+            subtitle.add_css_class ("caption");
+            text.append (subtitle);
+            append (text);
+        }
+
+        public void bind_group (LibraryGroup item, bool root) {
+            bool artist_row = item.albums != null;
+            artist_group = artist_row ? item : null;
+            title.label = item.title;
+            subtitle.label = item.artist;
+            subtitle.visible = root && !artist_row;
+            tooltip_text = artist_row ? item.title : item.title + " — " + item.artist;
+            image.visible = true;
+            image.name = artist_row ? "sidebar-artist-placeholder" : "sidebar-album-cover";
+            if (artist_row) image.add_css_class ("gtkplayer-artist-thumbnail");
+            else image.remove_css_class ("gtkplayer-artist-thumbnail");
+            image.set_from_icon_name (artist_row ? "avatar-default-symbolic" : "audio-x-generic-symbolic");
+            image.pixel_size = 20;
+            if (!artist_row) {
+                var cover = item.cover_artwork ();
+                if (cover != null) show_image (cover);
+            }
+        }
+
+        public void bind_track (Track track) {
+            title.label = track.title;
+            tooltip_text = track.title;
+            subtitle.visible = image.visible = false;
+        }
+
+        public void show_portrait (Gdk.Texture texture, ArtistPhoto photo) {
+            if (photo_button == null) {
+                portrait_image = new Gtk.Image ();
+                portrait_image.name = "sidebar-artist-photo";
+                portrait_image.set_size_request (40, 40);
+                portrait_image.pixel_size = 40;
+                portrait_image.overflow = Gtk.Overflow.HIDDEN;
+                portrait_image.add_css_class ("gtkplayer-artwork");
+                portrait_image.add_css_class ("gtkplayer-artist-thumbnail");
+                photo_button = new Gtk.MenuButton ();
+                photo_button.name = "sidebar-photo-credits";
+                photo_button.valign = Gtk.Align.CENTER;
+                photo_button.add_css_class ("flat");
+                photo_button.add_css_class ("gtkplayer-portrait-button");
+                photo_button.child = portrait_image;
+                insert_child_after (photo_button, image);
+            }
+            var content = new Gtk.Box (Gtk.Orientation.VERTICAL, 6);
+            var author = new Gtk.Label (photo.author);
+            author.add_css_class ("heading");
+            author.wrap = true;
+            author.wrap_mode = Pango.WrapMode.WORD_CHAR;
+            author.max_width_chars = 28;
+            content.append (author);
+            content.append (new Gtk.LinkButton.with_label (photo.license_url, photo.license_name));
+            content.append (new Gtk.LinkButton.with_label (photo.source_url, "Wikimedia Commons"));
+            var credits = new Gtk.Popover ();
+            credits.child = content;
+            photo_button.popover = credits;
+            photo_button.tooltip_text = "Créditos de la foto";
+            photo_button.update_property (Gtk.AccessibleProperty.LABEL, "Créditos de la foto de " + title.label, -1);
+            portrait_image.set_from_paintable (texture);
+            photo_button.visible = true;
+            image.visible = false;
+            has_portrait = true;
+        }
+
+        private void show_image (Gdk.Texture texture) {
+            image.pixel_size = 40;
+            image.set_from_paintable (texture);
+        }
+
+        public void unbind () {
+            artist_group = null;
+            has_portrait = false;
+            image.clear ();
+            if (photo_button != null) {
+                photo_button.popover = null;
+                photo_button.visible = false;
+                portrait_image.clear ();
+            }
+        }
     }
 
     public class QueueDrag : Object {
@@ -30,20 +167,29 @@ namespace Music {
         private Gtk.Separator before;
         private Gtk.Separator after;
         public signal void requested (string action);
-        public MediaRow (bool card = false, bool queue = false, bool artist_row = false) {
+        public MediaRow (bool card = false, bool queue = false) {
             Object (orientation: Gtk.Orientation.VERTICAL, spacing: 0);
             before = new Gtk.Separator (Gtk.Orientation.HORIZONTAL);
             after = new Gtk.Separator (Gtk.Orientation.HORIZONTAL);
             before.add_css_class ("queue-insertion");
             after.add_css_class ("queue-insertion");
             append (before);
-            var body = new Gtk.Box (card ? Gtk.Orientation.VERTICAL : Gtk.Orientation.HORIZONTAL, 12);
-            body.margin_top = body.margin_bottom = 10;
-            body.margin_start = body.margin_end = 12;
+            var body = new Gtk.Box (card ? Gtk.Orientation.VERTICAL : Gtk.Orientation.HORIZONTAL, card ? 6 : 12);
+            body.margin_top = body.margin_bottom = card ? 6 : 8;
+            body.margin_start = body.margin_end = card ? 6 : 12;
             artwork = new Gtk.Image.from_icon_name ("audio-x-generic-symbolic");
-            artwork.pixel_size = card ? 160 : 40;
+            artwork.pixel_size = card ? 36 : 40;
             artwork.visible = card;
-            body.append (artwork);
+            if (card) {
+                body.add_css_class ("gtkplayer-album-tile");
+                artwork.set_size_request (144, 144);
+                artwork.add_css_class ("gtkplayer-artwork");
+                artwork.halign = Gtk.Align.START;
+                artwork.overflow = Gtk.Overflow.HIDDEN;
+                body.append (artwork);
+            }
+            var metadata = card ? new Gtk.Box (Gtk.Orientation.HORIZONTAL, 2) : body;
+            if (card) body.append (metadata);
             var text = new Gtk.Box (Gtk.Orientation.VERTICAL, 3);
             text.hexpand = true;
             title = new Gtk.Label ("");
@@ -54,20 +200,20 @@ namespace Music {
             subtitle = new Gtk.Label ("");
             subtitle.xalign = 0;
             subtitle.ellipsize = Pango.EllipsizeMode.END;
-            subtitle.add_css_class ("dim-label");
             text.append (subtitle);
             marker = new Gtk.Label ("");
             marker.xalign = 0;
             marker.add_css_class ("caption");
             text.append (marker);
-            body.append (text);
+            metadata.append (text);
             duration = new Gtk.Label ("");
             duration.add_css_class ("numeric");
-            duration.visible = !card && !artist_row;
-            body.append (duration);
+            duration.visible = !card;
+            metadata.append (duration);
             var menu = new Gtk.MenuButton ();
             menu.icon_name = "view-more-symbolic";
             menu.tooltip_text = queue ? "Acciones de la entrada" : "Acciones de música";
+            menu.update_property (Gtk.AccessibleProperty.LABEL, menu.tooltip_text, -1);
             menu.valign = Gtk.Align.CENTER;
             menu.add_css_class ("flat");
             var popover = new Gtk.Popover ();
@@ -84,7 +230,7 @@ namespace Music {
             }
             popover.child = actions;
             menu.popover = popover;
-            body.append (menu);
+            metadata.append (menu);
             append (body);
             append (after);
             insertion (0);
@@ -117,19 +263,20 @@ namespace Music {
             artwork.set_from_icon_name ("audio-x-generic-symbolic");
             insertion (0);
         }
-        public void bind_group (LibraryGroup group, bool is_artist = false) {
+        public void bind_group (LibraryGroup group) {
             tracks = group.tracks;
             entry_id = null;
             artist = group.artist;
             title.label = group.title;
-            subtitle.label = is_artist ? (tracks.length == 1 ? "%u pista" : "%u pistas").printf (tracks.length) : group.artist;
+            subtitle.label = group.artist;
             marker.visible = false;
             tooltip_text = group.title + " — " + group.artist;
-            artwork.set_from_icon_name (is_artist ? "avatar-default-symbolic" : "audio-x-generic-symbolic");
-            if (!is_artist) foreach (var track in tracks) {
-                if (track.cover_data == null) continue;
-                try { artwork.set_from_paintable (Gdk.Texture.from_bytes (track.cover_data)); break; }
-                catch (Error e) { }
+            artwork.set_from_icon_name ("audio-x-generic-symbolic");
+            artwork.pixel_size = 36;
+            var cover = group.cover_artwork ();
+            if (cover != null) {
+                artwork.set_from_paintable (cover);
+                artwork.pixel_size = 144;
             }
             insertion (0);
         }

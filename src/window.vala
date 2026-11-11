@@ -13,9 +13,16 @@ namespace Music {
         private string? selected_album;
         private Gtk.SearchEntry search;
         private Gtk.Stack browser_stack;
+        private Gtk.Stack sidebar_stack;
         private Gtk.Button library_back;
-        private ListStore album_store;
+        private Gtk.NoSelection album_grid_model;
+        private ListStore sidebar_album_store;
         private ListStore artist_store;
+        private Gtk.TreeListModel sidebar_album_tree;
+        private Gtk.TreeListModel sidebar_artist_tree;
+        private Gtk.SingleSelection sidebar_album_selection;
+        private Gtk.SingleSelection sidebar_artist_selection;
+        private Gtk.ListView sidebar_artists;
         private ListStore track_store;
         private ListStore queue_store;
         private Gtk.SingleSelection track_selection;
@@ -36,7 +43,7 @@ namespace Music {
         private double drop_x;
         private double drop_y;
         private Adw.OverlaySplitView navigation_overlay;
-        private Adw.OverlaySplitView details_overlay;
+        private Adw.OverlaySplitView queue_panel_overlay;
         private bool compact;
         private PlayQueue queue = new PlayQueue ();
         private Player player;
@@ -71,30 +78,25 @@ namespace Music {
         private Gtk.Image cover;
         private Gtk.Label heading;
         private Gtk.Label selection_hint;
-        private Adw.StatusPage queue_empty;
-        private Gtk.Label info;
+        private Gtk.MenuButton selection_menu;
+        private Gtk.Button show_all_tracks;
+        private Gtk.Box queue_empty;
         private ArtistPhotos? photos;
-        private Cancellable? photo_cancel;
-        private string? portrait_artist;
         private HashTable<string, ArtistPhoto> photo_cache = new HashTable<string, ArtistPhoto> (str_hash, str_equal);
-        private Gtk.Box artist_card;
-        private Gtk.Image artist_portrait;
-        private Gtk.Label artist_name;
-        private Gtk.Label photo_author;
-        private Gtk.Label photo_status;
-        private Gtk.LinkButton photo_license;
-        private Gtk.LinkButton photo_source;
+        private List<LibrarySidebarRow> artist_rows;
+        private HashTable<string, bool> unavailable_thumbnails = new HashTable<string, bool> (str_hash, str_equal);
+        private uint thumbnail_idle;
+        private Cancellable? thumbnail_cancel;
         private Gtk.Label now_playing;
         private Gtk.Label elapsed_time;
         private Gtk.Label duration_time;
-        private Gtk.ListBox groups;
         private Gtk.ListView tracks;
         private Gtk.ListView queue_list;
         private Gtk.Scale position_scale;
         private uint ticker;
         private bool updating_position;
         private bool closed;
-        private Gtk.CssProvider insertion_style = new Gtk.CssProvider ();
+        private Gtk.CssProvider library_style = new Gtk.CssProvider ();
         private Gtk.CssProvider album_style = new Gtk.CssProvider ();
         private Gdk.RGBA? album_color;
         private Adw.StyleManager theme;
@@ -158,14 +160,14 @@ namespace Music {
                 theme.disconnect (dark_changed);
                 theme.disconnect (contrast_changed);
                 album_style.load_from_data ("".data);
-                Gtk.StyleContext.remove_provider_for_display (get_display (), insertion_style);
+                Gtk.StyleContext.remove_provider_for_display (get_display (), library_style);
                 preferences.set_focus (null);
                 preferences.destroy ();
                 if (scan_cancel != null) scan_cancel.cancel ();
-                if (photo_cancel != null) photo_cancel.cancel ();
+                if (thumbnail_cancel != null) thumbnail_cancel.cancel ();
+                if (thumbnail_idle != 0) { Source.remove (thumbnail_idle); thumbnail_idle = 0; }
                 if (import_cancel != null) import_cancel.cancel ();
                 if (drop_scroll != 0) { Source.remove (drop_scroll); drop_scroll = 0; }
-                photo_cancel = null;
                 player.shutdown ();
                 if (ticker != 0) { Source.remove (ticker); ticker = 0; }
                 return false;
@@ -200,8 +202,16 @@ namespace Music {
             header.get_style_context ().add_provider (album_style, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
             header.title_widget = new Gtk.Label ("Tu biblioteca");
             root.append (header);
-            insertion_style.load_from_data (".queue-insertion { min-height: 3px; background-color: @accent_color; }".data);
-            Gtk.StyleContext.add_provider_for_display (get_display (), insertion_style, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+            library_style.load_from_data ("""
+                .gtkplayer-artwork { background-color: @card_bg_color; border-radius: 8px; }
+                .gtkplayer-artist-thumbnail { border-radius: 999px; }
+                .gtkplayer-portrait-button > button { min-width: 0; min-height: 0; padding: 0; }
+                .gtkplayer-album-tile { min-width: 11.5em; }
+                .gtkplayer-library-tabs > button { min-width: 0; padding-left: 10px; padding-right: 10px; }
+                .gtkplayer-browser-surface { background-color: transparent; }
+                .queue-insertion { min-height: 3px; background-color: @accent_color; }
+                """.data);
+            Gtk.StyleContext.add_provider_for_display (get_display (), library_style, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
             build_preferences ();
             var settings_button = icon_button ("emblem-system-symbolic", "Preferencias");
             settings_button.name = "open-preferences";
@@ -218,55 +228,97 @@ namespace Music {
             spinner = new Gtk.Spinner ();
             header.pack_end (spinner);
 
-            var left = new Gtk.Box (Gtk.Orientation.VERTICAL, 10);
+            var left = new Gtk.Box (Gtk.Orientation.VERTICAL, 8);
             left.name = "library";
-            left.margin_start = left.margin_end = 12;
-            left.append (title_label ("Tu biblioteca"));
-            groups = new Gtk.ListBox ();
-            groups.add_css_class ("navigation-sidebar");
-            foreach (string label in new string[] {"Álbumes", "Artistas", "Canciones"}) groups.append (text_label (label));
-            groups.select_row (groups.get_row_at_index (0));
-            groups.activate_on_single_click = true;
-            groups.row_selected.connect ((row) => { if (row != null) navigate_library (row.get_index ()); });
-            groups.row_activated.connect ((row) => { navigate_library (row.get_index ()); });
-            left.append (scroll (groups));
+            left.margin_start = left.margin_end = 8;
+            left.margin_top = 12;
+            sidebar_stack = new Gtk.Stack ();
+            sidebar_stack.name = "library-categories";
+            sidebar_stack.vexpand = true;
+            var categories = new Gtk.StackSwitcher ();
+            categories.stack = sidebar_stack;
+            categories.name = "library-tabs";
+            categories.add_css_class ("gtkplayer-library-tabs");
+            categories.update_property (Gtk.AccessibleProperty.LABEL, "Categorías de la biblioteca", -1);
+            left.append (categories);
+            sidebar_album_store = new ListStore (typeof (LibraryGroup));
+            artist_store = new ListStore (typeof (LibraryGroup));
+            sidebar_album_tree = new Gtk.TreeListModel (sidebar_album_store, false, false, sidebar_children);
+            sidebar_artist_tree = new Gtk.TreeListModel (artist_store, false, false, sidebar_children);
+            sidebar_album_selection = new Gtk.SingleSelection (sidebar_album_tree) { autoselect = false, can_unselect = true };
+            sidebar_artist_selection = new Gtk.SingleSelection (sidebar_artist_tree) { autoselect = false, can_unselect = true };
+            var sidebar_albums = build_sidebar_list (sidebar_album_selection, false);
+            sidebar_artists = build_sidebar_list (sidebar_artist_selection, true);
+            sidebar_albums.activate.connect ((index) => { activate_sidebar_row (sidebar_album_tree, index, "albums"); });
+            sidebar_artists.activate.connect ((index) => { activate_sidebar_row (sidebar_artist_tree, index, "artists"); });
+            sidebar_artists.map.connect (schedule_thumbnails);
+            sidebar_artists.unmap.connect (() => {
+                if (thumbnail_cancel != null) thumbnail_cancel.cancel ();
+            });
+            sidebar_stack.add_titled (scroll (sidebar_albums), "albums", "Álbumes");
+            var artist_scroll = scroll (sidebar_artists);
+            artist_scroll.vadjustment.changed.connect (schedule_thumbnails);
+            artist_scroll.vadjustment.value_changed.connect (schedule_thumbnails);
+            sidebar_stack.add_titled (artist_scroll, "artists", "Artistas");
+            left.append (sidebar_stack);
 
             var center = new Gtk.Box (Gtk.Orientation.VERTICAL, 12);
             center.name = "tracks";
             center.hexpand = true;
-            center.margin_start = center.margin_end = 20;
-            var summary = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 20);
-            summary.margin_top = summary.margin_bottom = 20;
+            center.margin_start = center.margin_end = 18;
+            center.margin_top = 16;
+            var summary = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 14);
             cover = new Gtk.Image.from_icon_name ("audio-x-generic-symbolic");
-            cover.pixel_size = 96;
+            cover.set_size_request (144, 144);
+            cover.add_css_class ("gtkplayer-artwork");
+            cover.overflow = Gtk.Overflow.HIDDEN;
             cover.valign = Gtk.Align.CENTER;
+            cover.visible = false;
             summary.append (cover);
-            var summary_text = new Gtk.Box (Gtk.Orientation.VERTICAL, 8);
+            var summary_text = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
+            summary_text.hexpand = true;
             summary_text.valign = Gtk.Align.CENTER;
-            heading = title_label ("Leyendo biblioteca…");
+            heading = text_label (empty_title);
             heading.add_css_class ("title-1");
             heading.ellipsize = Pango.EllipsizeMode.END;
-            heading.max_width_chars = 30;
             heading.tooltip_text = heading.label;
             summary_text.append (heading);
-            selection_hint = text_label ("La música aparecerá aquí al terminar la carga");
+            selection_hint = text_label (empty_hint);
             selection_hint.wrap = true;
+            selection_hint.wrap_mode = Pango.WrapMode.WORD_CHAR;
+            selection_hint.ellipsize = Pango.EllipsizeMode.END;
+            selection_hint.lines = 2;
             summary_text.append (selection_hint);
             summary.append (summary_text);
-            var selection_menu = new Gtk.MenuButton ();
-            selection_menu.label = "Acciones de la selección";
-            selection_menu.halign = Gtk.Align.START;
+            selection_menu = new Gtk.MenuButton ();
+            selection_menu.name = "library-actions";
+            selection_menu.icon_name = "view-more-symbolic";
+            selection_menu.add_css_class ("flat");
+            selection_menu.valign = Gtk.Align.CENTER;
+            selection_menu.visible = false;
             var selection_popover = new Gtk.Popover ();
             var selection_actions = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
             foreach (string action in new string[] {"append", "next", "now"}) {
                 string selected_action = action;
                 var button = new Gtk.Button.with_label (action == "append" ? "Agregar a la cola" : action == "next" ? "Reproducir a continuación" : "Reproducir ahora");
-                button.clicked.connect (() => { music_action (visible_tracks, selected_action); });
+                button.add_css_class ("flat");
+                button.clicked.connect (() => {
+                    selection_popover.popdown ();
+                    music_action (visible_tracks, selected_action);
+                });
                 selection_actions.append (button);
             }
+            show_all_tracks = new Gtk.Button.with_label ("Ver todas las pistas");
+            show_all_tracks.name = "show-all-tracks";
+            show_all_tracks.add_css_class ("flat");
+            show_all_tracks.clicked.connect (() => {
+                selection_popover.popdown ();
+                set_library_page ("songs");
+            });
+            selection_actions.append (show_all_tracks);
             selection_popover.child = selection_actions;
             selection_menu.popover = selection_popover;
-            summary_text.append (selection_menu);
+            summary.append (selection_menu);
             center.append (summary);
             search = new Gtk.SearchEntry ();
             search.name = "library-search";
@@ -277,68 +329,76 @@ namespace Music {
             browser_stack.vexpand = true;
             track_store = new ListStore (typeof (Track));
             track_selection = new Gtk.SingleSelection (track_store);
+            track_selection.autoselect = false;
             tracks = new Gtk.ListView (track_selection, media_factory ("track"));
             tracks.name = "song-list";
-            tracks.add_css_class ("boxed-list");
+            tracks.add_css_class ("gtkplayer-browser-surface");
+            tracks.show_separators = true;
             tracks.single_click_activate = true;
             tracks.activate.connect ((index) => {
                 var track = track_store.get_item (index) as Track;
                 if (track != null) music_action ({track}, "now");
             });
             browser_stack.add_named (scroll (tracks), "songs");
-            album_store = new ListStore (typeof (LibraryGroup));
-            var album_selection = new Gtk.SingleSelection (album_store);
-            var albums = new Gtk.GridView (album_selection, media_factory ("album"));
+            album_grid_model = new Gtk.NoSelection (sidebar_album_store);
+            var albums = new Gtk.GridView (album_grid_model, media_factory ("album"));
             albums.name = "album-grid";
+            albums.add_css_class ("gtkplayer-browser-surface");
             albums.min_columns = 1;
             albums.max_columns = 8;
             albums.single_click_activate = true;
-            albums.activate.connect ((index) => { open_album ((LibraryGroup) album_store.get_item (index)); });
+            albums.activate.connect ((index) => {
+                var album = album_grid_model.get_item (index) as LibraryGroup;
+                if (album != null) open_album (album);
+            });
             browser_stack.add_named (scroll (albums), "albums");
-            artist_store = new ListStore (typeof (LibraryGroup));
-            var artists = new Gtk.ListView (new Gtk.SingleSelection (artist_store), media_factory ("artist"));
-            artists.name = "artist-list";
-            artists.single_click_activate = true;
-            artists.activate.connect ((index) => { open_artist ((LibraryGroup) artist_store.get_item (index)); });
-            browser_stack.add_named (scroll (artists), "artists");
             center.append (browser_stack);
 
-            var right = new Gtk.Box (Gtk.Orientation.VERTICAL, 10);
-            right.name = "details";
+            var right = new Gtk.Box (Gtk.Orientation.VERTICAL, 6);
+            right.name = "queue-panel";
             right.margin_start = right.margin_end = 12;
-            var stack = new Gtk.Stack ();
-            stack.vexpand = true;
-            var tabs = new Gtk.StackSwitcher ();
-            tabs.stack = stack;
-            tabs.halign = Gtk.Align.CENTER;
-            right.append (tabs);
-            info = text_label ("Sin reproducción\n\nLos datos de la pista aparecerán aquí.");
-            info.wrap = true;
-            info.wrap_mode = Pango.WrapMode.WORD_CHAR;
-            info.selectable = true;
-            var data = new Gtk.Box (Gtk.Orientation.VERTICAL, 16);
-            data.append (build_artist_card ());
-            data.append (new Gtk.Separator (Gtk.Orientation.HORIZONTAL));
-            data.append (info);
-            var data_scroll = scroll (data);
+            right.margin_top = 12;
             queue_store = new ListStore (typeof (QueueEntry));
             queue_selection = new Gtk.SingleSelection (queue_store);
             queue_list = new Gtk.ListView (queue_selection, media_factory ("queue"));
             queue_list.name = "queue-list";
-            queue_empty = new Adw.StatusPage ();
+            queue_list.add_css_class ("gtkplayer-browser-surface");
+            queue_empty = new Gtk.Box (Gtk.Orientation.VERTICAL, 8);
             queue_empty.name = "queue-empty";
-            queue_empty.add_css_class ("compact");
-            queue_empty.icon_name = "view-list-symbolic";
-            queue_empty.title = "Cola vacía";
-            queue_empty.description = "Agregá música desde la biblioteca o archivos y carpetas";
+            queue_empty.valign = Gtk.Align.CENTER;
+            queue_empty.margin_start = queue_empty.margin_end = 12;
+            var empty_icon = new Gtk.Image.from_icon_name ("view-list-symbolic");
+            empty_icon.pixel_size = 32;
+            empty_icon.add_css_class ("dim-label");
+            queue_empty.append (empty_icon);
+            var queue_title = new Gtk.Label ("Cola vacía");
+            queue_title.add_css_class ("heading");
+            queue_empty.append (queue_title);
+            var queue_hint = new Gtk.Label ("Agregá música desde la biblioteca o importá archivos y carpetas.");
+            queue_hint.wrap = true;
+            queue_hint.wrap_mode = Pango.WrapMode.WORD_CHAR;
+            queue_hint.justify = Gtk.Justification.CENTER;
+            queue_empty.append (queue_hint);
             queue_list.single_click_activate = true;
             queue_list.activate.connect ((index) => { player.activate ((int) index); });
-            var queue_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 6);
             var queue_toolbar = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
+            queue_toolbar.add_css_class ("toolbar");
+            var queue_heading = new Gtk.Box (Gtk.Orientation.VERTICAL, 2);
+            queue_heading.hexpand = true;
+            queue_heading.valign = Gtk.Align.CENTER;
+            queue_heading.append (title_label ("Cola"));
             queue_count = text_label ("0 pistas");
             queue_count.name = "queue-count";
-            queue_count.hexpand = true;
-            queue_toolbar.append (queue_count);
+            queue_count.ellipsize = Pango.EllipsizeMode.END;
+            queue_count.add_css_class ("dim-label");
+            queue_heading.append (queue_count);
+            queue_toolbar.append (queue_heading);
+            var add_files = icon_button ("list-add-symbolic", "Agregar archivos a la cola…");
+            add_files.clicked.connect (() => { choose_import.begin (false); });
+            queue_toolbar.append (add_files);
+            var add_folder = icon_button ("folder-open-symbolic", "Agregar carpetas a la cola…");
+            add_folder.clicked.connect (() => { choose_import.begin (true); });
+            queue_toolbar.append (add_folder);
             clear_button = icon_button ("edit-clear-all-symbolic", "Vaciar cola");
             clear_button.name = "clear-queue";
             clear_button.clicked.connect (clear_queue);
@@ -347,15 +407,7 @@ namespace Music {
             undo_button.name = "undo-queue";
             undo_button.clicked.connect (() => { queue.undo_clear (); });
             queue_toolbar.append (undo_button);
-            queue_box.append (queue_toolbar);
-            var import_buttons = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
-            var add_files = icon_button ("list-add-symbolic", "Agregar archivos a la cola…");
-            add_files.clicked.connect (() => { choose_import.begin (false); });
-            import_buttons.append (add_files);
-            var add_folder = icon_button ("folder-open-symbolic", "Agregar carpetas a la cola…");
-            add_folder.clicked.connect (() => { choose_import.begin (true); });
-            import_buttons.append (add_folder);
-            queue_box.append (import_buttons);
+            right.append (queue_toolbar);
             import_activity = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
             import_spinner = new Gtk.Spinner ();
             import_activity.append (import_spinner);
@@ -368,7 +420,7 @@ namespace Music {
             cancel_import.clicked.connect (() => { if (import_cancel != null) import_cancel.cancel (); });
             import_activity.append (cancel_import);
             import_activity.visible = false;
-            queue_box.append (import_activity);
+            right.append (import_activity);
             var queue_scroll = scroll (queue_list);
 
             // The empty placeholder also accepts drops: the list remains allocated behind it.
@@ -379,14 +431,10 @@ namespace Music {
             queue_empty.can_target = false;
             queue_overlay.add_overlay (queue_empty);
             queue_overlay.vexpand = true;
-            queue_box.append (queue_overlay);
+            right.append (queue_overlay);
             install_queue_drop (queue_scroll);
             // Empty-space drops land on the list's full viewport.
             queue_list.vexpand = true;
-            stack.add_titled (queue_box, "queue", "Cola");
-            stack.add_titled (data_scroll, "data", "Datos");
-            stack.visible_child_name = "queue";
-            right.append (stack);
             var inner = new Gtk.Paned (Gtk.Orientation.HORIZONTAL);
             inner.start_child = panel_viewport (center);
             var right_viewport = panel_viewport (right);
@@ -422,24 +470,24 @@ namespace Music {
             panels.vexpand = true;
             notices = new Adw.ToastOverlay ();
             notices.name = "library-notices";
-            details_overlay = new Adw.OverlaySplitView ();
-            details_overlay.collapsed = true;
-            details_overlay.show_sidebar = false;
-            details_overlay.sidebar_position = Gtk.PackType.END;
-            details_overlay.min_sidebar_width = 320;
-            details_overlay.max_sidebar_width = 400;
-            details_overlay.content = panels;
+            queue_panel_overlay = new Adw.OverlaySplitView ();
+            queue_panel_overlay.collapsed = true;
+            queue_panel_overlay.show_sidebar = false;
+            queue_panel_overlay.sidebar_position = Gtk.PackType.END;
+            queue_panel_overlay.min_sidebar_width = 320;
+            queue_panel_overlay.max_sidebar_width = 400;
+            queue_panel_overlay.content = panels;
             navigation_overlay = new Adw.OverlaySplitView ();
             navigation_overlay.collapsed = true;
             navigation_overlay.show_sidebar = false;
-            navigation_overlay.content = details_overlay;
+            navigation_overlay.content = queue_panel_overlay;
             var library_toggle = icon_button ("sidebar-show-symbolic", "Mostrar biblioteca");
             library_toggle.name = "show-library";
             library_toggle.clicked.connect (() => { navigation_overlay.show_sidebar = !navigation_overlay.show_sidebar; });
             header.pack_start (library_toggle);
-            var queue_toggle = icon_button ("view-list-symbolic", "Mostrar cola y datos");
-            queue_toggle.name = "show-details";
-            queue_toggle.clicked.connect (() => { details_overlay.show_sidebar = !details_overlay.show_sidebar; });
+            var queue_toggle = icon_button ("view-list-symbolic", "Mostrar cola");
+            queue_toggle.name = "show-queue";
+            queue_toggle.clicked.connect (() => { queue_panel_overlay.show_sidebar = !queue_panel_overlay.show_sidebar; });
             header.pack_end (queue_toggle);
             double detail_proportion = 0.64;
             int inner_width = 0;
@@ -457,10 +505,10 @@ namespace Music {
                         panels.start_child = null;
                         inner.end_child = null;
                         navigation_overlay.sidebar = left_viewport;
-                        details_overlay.sidebar = right_viewport;
+                        queue_panel_overlay.sidebar = right_viewport;
                     } else {
-                        navigation_overlay.show_sidebar = details_overlay.show_sidebar = false;
-                        navigation_overlay.sidebar = details_overlay.sidebar = null;
+                        navigation_overlay.show_sidebar = queue_panel_overlay.show_sidebar = false;
+                        navigation_overlay.sidebar = queue_panel_overlay.sidebar = null;
                         panels.start_child = left_viewport;
                         inner.end_child = right_viewport;
                         panel_width = inner_width = 0;
@@ -482,6 +530,12 @@ namespace Music {
             content = root;
             var shortcuts = new Gtk.ShortcutController ();
             shortcuts.scope = Gtk.ShortcutScope.MANAGED;
+            shortcuts.add_shortcut (new Gtk.Shortcut (new Gtk.KeyvalTrigger (Gdk.Key.F9, 0),
+                new Gtk.CallbackAction ((widget, args) => {
+                    if (!compact) return false;
+                    queue_toggle.clicked ();
+                    return true;
+                })));
             shortcuts.add_shortcut (new Gtk.Shortcut (new Gtk.KeyvalTrigger (Gdk.Key.f, Gdk.ModifierType.CONTROL_MASK),
                 new Gtk.CallbackAction ((widget, args) => { return search.grab_focus (); })));
             shortcuts.add_shortcut (new Gtk.Shortcut (new Gtk.KeyvalTrigger (Gdk.Key.z, Gdk.ModifierType.CONTROL_MASK),
@@ -503,99 +557,70 @@ namespace Music {
             ((Gtk.Widget) this).add_controller (drag_keys);
             refresh_queue ();
             update_player ();
+            sidebar_stack.notify["visible-child-name"].connect (() => {
+                string? category = sidebar_stack.visible_child_name;
+                if (!closed && category != null && category != browsing_page) set_library_page (category);
+            });
         }
 
-        private Gtk.Widget build_artist_card () {
-            artist_card = new Gtk.Box (Gtk.Orientation.VERTICAL, 8);
-            artist_card.add_css_class ("card");
-            artist_card.margin_top = artist_card.margin_bottom = 12;
-            artist_card.append (title_label ("Sobre el artista"));
-            artist_portrait = new Gtk.Image.from_icon_name ("avatar-default-symbolic");
-            artist_portrait.name = "artist-portrait";
-            artist_portrait.pixel_size = 192;
-            artist_portrait.halign = Gtk.Align.CENTER;
-            artist_portrait.tooltip_text = "Retrato del artista";
-            artist_card.append (artist_portrait);
-            artist_name = title_label ("");
-            artist_name.wrap = true;
-            artist_card.append (artist_name);
-            photo_status = text_label ("Expandí un artista o seleccioná un álbum para ver su retrato público");
-            photo_status.wrap = true;
-            artist_card.append (photo_status);
-            photo_author = text_label ("");
-            photo_author.wrap = true;
-            photo_author.selectable = true;
-            photo_author.visible = false;
-            artist_card.append (photo_author);
-            photo_license = new Gtk.LinkButton.with_label ("", "Licencia");
-            photo_license.halign = Gtk.Align.START;
-            photo_license.visible = false;
-            artist_card.append (photo_license);
-            photo_source = new Gtk.LinkButton.with_label ("", "Fuente: Wikimedia Commons");
-            photo_source.halign = Gtk.Align.START;
-            photo_source.visible = false;
-            artist_card.append (photo_source);
-            return artist_card;
+        private void remember_photo (string artist, ArtistPhoto photo) {
+            // At most twelve downloaded portraits (the provider caps each at 5 MiB).
+            if (photo_cache.size () >= 12 && !photo_cache.contains (artist)) photo_cache.remove_all ();
+            photo_cache.insert (artist, photo);
+            unavailable_thumbnails.remove (artist);
         }
 
-        private void select_artist (string? artist) {
-            if (closed || (artist != null && artist == portrait_artist)) return;
-            if (photo_cancel != null) photo_cancel.cancel ();
-            photo_cancel = null;
-            portrait_artist = artist;
-            artist_portrait.set_from_icon_name ("avatar-default-symbolic");
-            artist_name.label = artist ?? "";
-            photo_author.label = "";
-            photo_author.visible = photo_license.visible = photo_source.visible = false;
-            photo_license.uri = photo_source.uri = "";
-            photo_status.visible = true;
-            photo_status.label = "Expandí un artista o seleccioná un álbum para ver su retrato público";
-            if (artist == null || artist.strip () == "") return;
-            photo_status.label = "Sin retrato disponible. Probá con otro artista de la biblioteca.";
-            if (photos == null) return;
-            var cached = photo_cache.lookup (artist);
-            if (cached != null) {
-                try {
-                    display_artist_photo (cached);
-                } catch (Error e) {
-                    photo_status.label = "No se pudo cargar el retrato. Probá con otro artista de la biblioteca.";
+        private void remember_unavailable_thumbnail (string artist) {
+            if (unavailable_thumbnails.size () >= 256) unavailable_thumbnails.remove_all ();
+            unavailable_thumbnails.insert (artist, true);
+        }
+
+        private void schedule_thumbnails () {
+            if (closed || photos == null || !sidebar_artists.get_mapped () ||
+                thumbnail_idle != 0 || thumbnail_cancel != null) return;
+            thumbnail_idle = Idle.add (() => {
+                thumbnail_idle = 0;
+                if (closed || !sidebar_artists.get_mapped ()) return Source.REMOVE;
+                foreach (var row in artist_rows) {
+                    var group = row.artist_group;
+                    if (!row.get_mapped () || row.has_portrait || group == null ||
+                        group.artist == "Artista desconocido" || unavailable_thumbnails.contains (group.artist)) continue;
+                    Graphene.Rect bounds;
+                    if (!row.compute_bounds (sidebar_artists, out bounds) ||
+                        bounds.get_y () + bounds.get_height () <= 0 || bounds.get_y () >= sidebar_artists.get_height ()) continue;
+                    var photo = photo_cache.lookup (group.artist);
+                    if (photo != null) {
+                        try { row.show_portrait (Gdk.Texture.from_bytes (photo.bytes), photo); }
+                        catch (Error e) { remember_unavailable_thumbnail (group.artist); }
+                        continue;
+                    }
+                    var request = new Cancellable ();
+                    thumbnail_cancel = request;
+                    load_thumbnail.begin (group.artist, request);
+                    break;
                 }
-                return;
-            }
-            photo_status.label = "Buscando retrato público…";
-            var request = new Cancellable ();
-            photo_cancel = request;
-            load_artist_photo.begin (artist, request);
+                return Source.REMOVE;
+            });
         }
 
-        private async void load_artist_photo (string artist, Cancellable request) {
+        private async void load_thumbnail (string artist, Cancellable request) {
+            ArtistPhoto? photo = null;
+            Gdk.Texture? texture = null;
             try {
-                var photo = yield photos.fetch (artist, request);
-                if (closed || request.is_cancelled () || photo_cancel != request) return;
-                photo_status.label = "Sin retrato disponible. Probá con otro artista de la biblioteca.";
-                if (photo != null) {
-                    display_artist_photo (photo);
-                    // At most twelve downloaded portraits (the provider caps each at 5 MiB).
-                    if (photo_cache.size () >= 12) photo_cache.remove_all ();
-                    photo_cache.insert (artist, photo);
+                photo = yield photos.fetch (artist, request);
+                if (photo != null && !request.is_cancelled ()) texture = Gdk.Texture.from_bytes (photo.bytes);
+            } catch (Error e) { }
+            if (!closed && !request.is_cancelled ()) {
+                if (photo != null && texture != null) {
+                    remember_photo (artist, photo);
+                    foreach (var row in artist_rows)
+                        if (row.get_mapped () && row.artist_group?.artist == artist) row.show_portrait (texture, photo);
+                } else {
+                    remember_unavailable_thumbnail (artist);
                 }
-            } catch (Error e) {
-                if (!closed && !request.is_cancelled () && photo_cancel == request)
-                    photo_status.label = "No se pudo cargar el retrato. Probá con otro artista de la biblioteca.";
-            } finally {
-                if (photo_cancel == request) photo_cancel = null;
             }
-        }
-
-        private void display_artist_photo (ArtistPhoto photo) throws Error {
-            var texture = Gdk.Texture.from_bytes (photo.bytes);
-            artist_portrait.set_from_paintable (texture);
-            photo_author.label = photo.author;
-            photo_license.label = photo.license_name;
-            photo_license.uri = photo.license_url;
-            photo_source.uri = photo.source_url;
-            photo_author.visible = photo_license.visible = photo_source.visible = true;
-            photo_status.visible = false;
+            thumbnail_cancel = null;
+            schedule_thumbnails ();
         }
 
         private Gtk.Widget build_controls () {
@@ -607,7 +632,11 @@ namespace Music {
             current.width_request = 240;
             now_cover = new Gtk.Image.from_icon_name ("audio-x-generic-symbolic");
             now_cover.name = "now-cover";
-            now_cover.pixel_size = 48;
+            now_cover.set_size_request (48, 48);
+            now_cover.add_css_class ("gtkplayer-artwork");
+            now_cover.overflow = Gtk.Overflow.HIDDEN;
+            now_cover.valign = Gtk.Align.CENTER;
+            now_cover.pixel_size = 22;
             current.append (now_cover);
             now_playing = text_label ("Nada en reproducción");
             now_playing.name = "now-playing";
@@ -899,8 +928,7 @@ namespace Music {
             if (library.length == 0) {
                 empty_title = "Leyendo biblioteca…";
                 empty_hint = "La música aparecerá aquí al terminar la carga";
-                heading.label = empty_title;
-                selection_hint.label = empty_hint;
+                set_library_summary (empty_title, empty_hint);
             }
             scan_cancel = new Cancellable ();
             try {
@@ -959,8 +987,7 @@ namespace Music {
                     if (library.length == 0) {
                         empty_title = "Carga cancelada";
                         empty_hint = "Volvé a cargar la biblioteca desde Preferencias";
-                        heading.label = empty_title;
-                        selection_hint.label = empty_hint;
+                        set_library_summary (empty_title, empty_hint);
                     }
                 }
             } catch (Error e) {
@@ -969,8 +996,7 @@ namespace Music {
                     if (library.length == 0) {
                         empty_title = "No se pudo cargar la biblioteca";
                         empty_hint = "Revisá la ubicación en Preferencias y volvé a cargar";
-                        heading.label = empty_title;
-                        selection_hint.label = empty_hint;
+                        set_library_summary (empty_title, empty_hint);
                     }
                     show_error ("No se pudo cargar la biblioteca. Revisá Preferencias.", e.message);
                 }
@@ -1066,11 +1092,93 @@ namespace Music {
             return true;
         }
 
+        private static ListModel? sidebar_children (Object item) {
+            var group = item as LibraryGroup;
+            return group == null ? null : group.sidebar_children ();
+        }
+
+        private Gtk.ListView build_sidebar_list (Gtk.SingleSelection selection, bool artists) {
+            var factory = new Gtk.SignalListItemFactory ();
+            factory.setup.connect ((obj) => {
+                var row = new LibrarySidebarRow ();
+                if (artists) row.map.connect (schedule_thumbnails);
+                var expander = new Gtk.TreeExpander ();
+                expander.child = row;
+                ((Gtk.ListItem) obj).child = expander;
+            });
+            factory.bind.connect ((obj) => {
+                var item = (Gtk.ListItem) obj;
+                var expander = (Gtk.TreeExpander) item.child;
+                var branch = (Gtk.TreeListRow) item.item;
+                expander.list_row = branch;
+                var row = (LibrarySidebarRow) expander.child;
+                var group = branch.item as LibraryGroup;
+                if (group != null) row.bind_group (group, branch.depth == 0);
+                else row.bind_track ((Track) branch.item);
+                // GtkListItem gained an explicit accessible label in GTK 4.12.
+                if (item.get_class ().find_property ("accessible-label") != null)
+                    item.set ("accessible-label", row.tooltip_text);
+                if (row.artist_group != null) {
+                    artist_rows.append (row);
+                    schedule_thumbnails ();
+                }
+            });
+            factory.unbind.connect ((obj) => {
+                var expander = (Gtk.TreeExpander) ((Gtk.ListItem) obj).child;
+                var row = (LibrarySidebarRow) expander.child;
+                if (row.artist_group != null) artist_rows.remove (row);
+                row.unbind ();
+                expander.list_row = null;
+            });
+            var list = new Gtk.ListView (selection, factory);
+            list.name = artists ? "artist-list" : "sidebar-album-list";
+            list.single_click_activate = true;
+            list.add_css_class ("navigation-sidebar");
+            list.add_css_class ("gtkplayer-browser-surface");
+            list.update_property (Gtk.AccessibleProperty.LABEL, artists ? "Artistas de la biblioteca" : "Álbumes de la biblioteca", -1);
+            return list;
+        }
+
+        private void activate_sidebar_row (Gtk.TreeListModel tree, uint position, string category) {
+            var branch = tree.get_row (position);
+            if (branch == null) return;
+            var group = branch.item as LibraryGroup;
+            if (group != null) {
+                branch.expanded = !branch.expanded;
+                browsing_page = category;
+                if (group.albums != null) open_artist (group);
+                else open_album (group);
+                return;
+            }
+            var track = branch.item as Track;
+            if (track != null) {
+                var album = branch.get_parent ()?.item as LibraryGroup;
+                if (album != null && (selected_artist != album.artist || selected_album != album.title)) {
+                    browsing_page = category;
+                    open_album (album);
+                }
+                var selection = category == "artists" ? sidebar_artist_selection : sidebar_album_selection;
+                selection.selected = position;
+                music_action ({track}, "now");
+                navigation_overlay.show_sidebar = false;
+            }
+        }
+
+        private static bool select_sidebar_item (Gtk.SingleSelection selection, Object item) {
+            for (uint i = 0; i < selection.get_n_items (); i++) {
+                var branch = (Gtk.TreeListRow) selection.get_item (i);
+                if (branch.item != item) continue;
+                selection.selected = i;
+                return true;
+            }
+            return false;
+        }
+
         private Gtk.SignalListItemFactory media_factory (string kind) {
             var factory = new Gtk.SignalListItemFactory ();
             factory.setup.connect ((obj) => {
                 var item = (Gtk.ListItem) obj;
-                var row = new MediaRow (kind == "album", kind == "queue", kind == "artist");
+                var row = new MediaRow (kind == "album", kind == "queue");
                 row.requested.connect ((action) => {
                     if (row.entry_id != null) {
                         int index = queue.find (row.entry_id);
@@ -1090,7 +1198,7 @@ namespace Music {
                     int i = queue.find (entry.id);
                     row.bind_track (entry.track, entry.id, i == queue.index ? "Actual" : i < queue.index ? "Anterior" : "Pendiente");
                 } else if (kind == "track") row.bind_track ((Track) item.item);
-                else row.bind_group ((LibraryGroup) item.item, kind == "artist");
+                else row.bind_group ((LibraryGroup) item.item);
             });
             factory.unbind.connect ((obj) => { ((MediaRow) ((Gtk.ListItem) obj).child).unbind (); });
             return factory;
@@ -1105,50 +1213,37 @@ namespace Music {
             }
         }
 
-        private void navigate_library (int mode) {
-            string page = new string[] {"albums", "artists", "songs"}[mode];
-            if (page != browsing_page || browser_stack.visible_child_name != page || selected_album != null || selected_artist != null) {
-                browsing_page = page;
-                rebuild_groups ();
-            }
-            navigation_overlay.show_sidebar = false;
-        }
-
         private void go_back_in_library () {
             if (browsing_page == "artists" && selected_album != null && selected_artist != null) {
-                for (uint i = 0; i < artist_store.get_n_items (); i++) {
-                    var artist = (LibraryGroup) artist_store.get_item (i);
-                    if (artist.artist == selected_artist) { open_artist (artist); return; }
+                var artist = find_sidebar_artist (selected_artist);
+                if (artist != null) {
+                    open_artist (artist);
+                    return;
                 }
             }
-            rebuild_groups ();
+            set_library_page (sidebar_stack.visible_child_name ?? "albums");
         }
 
         private void set_library_page (owned string page) {
             browsing_page = page;
-            visible_tracks = filtered_tracks ();
-            update_player ();
+            var filtered = filtered_tracks ();
             selected_artist = selected_album = null;
-            library_back.visible = false;
-            if (page == "songs") show_tracks (filtered_tracks (), "Todas las pistas");
+            sidebar_album_selection.selected = Gtk.INVALID_LIST_POSITION;
+            sidebar_artist_selection.selected = Gtk.INVALID_LIST_POSITION;
+            library_back.visible = page == "songs";
+            if (page == "songs") show_tracks (filtered, "Todas las pistas");
             else {
-                select_artist (null);
-                heading.label = page == "artists" ? "Artistas" : "Álbumes";
-                selection_hint.label = page == "artists" ? "Elegí un artista para explorar sus álbumes" : "Elegí un álbum para ver sus canciones";
-                cover.set_from_icon_name ("audio-x-generic-symbolic");
-                cover.pixel_size = 96;
+                visible_tracks = (owned) filtered;
+                cover.visible = false;
                 album_color = null;
                 update_album_style ();
-                browser_stack.visible_child_name = page;
+                album_grid_model.model = sidebar_album_store;
+                browser_stack.visible_child_name = "albums";
+                if (library.length == 0) set_library_summary (empty_title, empty_hint);
+                else if (visible_tracks.length == 0) set_library_summary ("Sin resultados", "Probá con otro título, artista o álbum");
+                else set_library_summary ("Álbumes", page == "artists" ? "Elegí un artista para ver sus álbumes" : "");
+                update_player ();
             }
-            if (library.length == 0) {
-                heading.label = empty_title;
-                selection_hint.label = empty_hint;
-            } else if (visible_tracks.length == 0) {
-                heading.label = "Sin resultados";
-                selection_hint.label = "Probá con otro título, artista o álbum";
-            }
-            navigation_overlay.show_sidebar = false;
         }
 
         private Track[] filtered_tracks () {
@@ -1160,40 +1255,82 @@ namespace Music {
             return result;
         }
 
+        private LibraryGroup? find_sidebar_artist (string name) {
+            for (uint i = 0; i < artist_store.get_n_items (); i++) {
+                var artist = (LibraryGroup) artist_store.get_item (i);
+                if (artist.artist == name) return artist;
+            }
+            return null;
+        }
+
+        private static string album_key (string artist, string album) {
+            // Length-prefixed exact keys keep homonyms and Unicode spellings distinct.
+            return "%u:%s%s".printf (artist.length, artist, album);
+        }
+
+        private static string branch_key (LibraryGroup group) {
+            return group.albums != null ? "artist:" + group.artist : album_key (group.artist, group.title);
+        }
+
+        private static HashTable<string, bool> expanded_branches (Gtk.TreeListModel tree) {
+            var expanded = new HashTable<string, bool> (str_hash, str_equal);
+            for (uint i = 0; i < tree.get_n_items (); i++) {
+                var branch = tree.get_row (i);
+                if (branch.expanded && branch.item is LibraryGroup)
+                    expanded.insert (branch_key ((LibraryGroup) branch.item), true);
+            }
+            return expanded;
+        }
+
+        private static void restore_expanded_branches (Gtk.TreeListModel tree, HashTable<string, bool> expanded) {
+            if (expanded.size () == 0) return;
+            // Expanding an artist exposes its albums later in the same traversal.
+            for (uint i = 0; i < tree.get_n_items (); i++) {
+                var branch = tree.get_row (i);
+                if (branch.item is LibraryGroup && expanded.contains (branch_key ((LibraryGroup) branch.item)))
+                    branch.expanded = true;
+            }
+        }
+
         private void rebuild_groups (bool preserve = false) {
             var albums = new HashTable<string, LibraryGroup> (str_hash, str_equal);
             var artists = new HashTable<string, LibraryGroup> (str_hash, str_equal);
             var ordered_albums = new List<LibraryGroup> ();
             var ordered_artists = new List<LibraryGroup> ();
             foreach (var track in filtered_tracks ()) {
-                // Length-prefixed exact keys keep homonyms and Unicode spellings distinct.
-                string id = "%u:%s%s".printf (track.artist.length, track.artist, track.album);
-                var album = albums.lookup (id);
-                if (album == null) {
-                    album = new LibraryGroup (track.album, track.artist);
-                    albums.insert (id, album);
-                    ordered_albums.append (album);
-                }
-                album.add (track);
                 var artist = artists.lookup (track.artist);
                 if (artist == null) {
                     artist = new LibraryGroup (track.artist, track.artist);
                     artists.insert (track.artist, artist);
                     ordered_artists.append (artist);
                 }
+                string id = album_key (track.artist, track.album);
+                var album = albums.lookup (id);
+                if (album == null) {
+                    album = new LibraryGroup (track.album, track.artist);
+                    albums.insert (id, album);
+                    ordered_albums.append (album);
+                    artist.add_album (album);
+                }
+                album.add (track);
                 artist.add (track);
             }
             Object[] album_items = {};
             Object[] artist_items = {};
             foreach (var album in ordered_albums) album_items += album;
             foreach (var artist in ordered_artists) artist_items += artist;
-            album_store.splice (0, album_store.get_n_items (), album_items);
+            var expanded_albums = expanded_branches (sidebar_album_tree);
+            var expanded_artists = expanded_branches (sidebar_artist_tree);
+            sidebar_album_store.splice (0, sidebar_album_store.get_n_items (), album_items);
             artist_store.splice (0, artist_store.get_n_items (), artist_items);
+            restore_expanded_branches (sidebar_album_tree, expanded_albums);
+            restore_expanded_branches (sidebar_artist_tree, expanded_artists);
             if (preserve && selected_album != null) {
-                Track[] selected = {};
-                foreach (var track in filtered_tracks ())
-                    if (track.artist == selected_artist && track.album == selected_album) selected += track;
-                if (selected.length > 0) { show_tracks (selected, selected_album + " — " + selected_artist, true); return; }
+                var album = albums.lookup (album_key (selected_artist, selected_album));
+                if (album != null) {
+                    open_album (album);
+                    return;
+                }
             }
             if (preserve && browsing_page == "artists" && selected_artist != null) {
                 var artist = artists.lookup (selected_artist);
@@ -1206,7 +1343,13 @@ namespace Music {
             selected_artist = album.artist;
             selected_album = album.title;
             library_back.visible = true;
-            show_tracks (album.tracks, album.title + " — " + album.artist, true);
+            if (browsing_page == "albums") {
+                select_sidebar_item (sidebar_album_selection, album);
+            } else if (!select_sidebar_item (sidebar_artist_selection, album)) {
+                var artist = find_sidebar_artist (album.artist);
+                if (artist != null) select_sidebar_item (sidebar_artist_selection, artist);
+            }
+            show_tracks (album.tracks, album.title, true);
         }
 
         private void open_artist (LibraryGroup artist) {
@@ -1214,30 +1357,14 @@ namespace Music {
             selected_album = null;
             visible_tracks = artist.tracks;
             library_back.visible = true;
-            cover.set_from_icon_name ("audio-x-generic-symbolic");
-            cover.pixel_size = 96;
+            cover.visible = false;
             album_color = null;
             update_album_style ();
-            select_artist (artist.artist);
-            album_store.remove_all ();
-            var albums = new HashTable<string, LibraryGroup> (str_hash, str_equal);
-            foreach (var track in artist.tracks) {
-                var album = albums.lookup (track.album);
-                if (album == null) {
-                    album = new LibraryGroup (track.album, track.artist);
-                    albums.insert (track.album, album);
-                }
-                album.add (track);
-            }
-            // Traverse already sorted tracks for stable album order.
-            string? last = null;
-            foreach (var track in artist.tracks) {
-                if (track.album != last) album_store.append (albums.lookup (track.album));
-                last = track.album;
-            }
-            heading.label = artist.title;
-            selection_hint.label = "Elegí un álbum para ver sus canciones";
+            select_sidebar_item (sidebar_artist_selection, artist);
+            album_grid_model.model = artist.albums;
+            set_library_summary (artist.title, track_count_text (artist.tracks.length));
             browser_stack.visible_child_name = "albums";
+            update_player ();
         }
 
         public async void import_files (File[] sources, int insertion = -1) {
@@ -1373,16 +1500,17 @@ namespace Music {
         }
 
         private void show_tracks (Track[] selection, string title, bool album_selected = false) {
-            select_artist (album_selected && selection.length > 0 ? selection[0].artist : null);
-            cover.set_from_icon_name ("audio-x-generic-symbolic");
-            cover.pixel_size = album_selected ? 192 : 96;
+            cover.visible = album_selected;
             album_color = null;
             if (album_selected) {
+                cover.set_from_icon_name ("audio-x-generic-symbolic");
+                cover.pixel_size = 40;
                 foreach (var track in selection) {
                     if (track.cover_data == null) continue;
                     try {
                         var texture = Gdk.Texture.from_bytes (track.cover_data);
                         cover.set_from_paintable (texture);
+                        cover.pixel_size = 144;
                         extract_album_color (texture);
                         break;
                     } catch (Error e) { }
@@ -1392,14 +1520,38 @@ namespace Music {
             visible_tracks = selection;
             track_store.remove_all ();
             browser_stack.visible_child_name = "songs";
-            heading.label = selection.length == 0 ? (search.text == "" ? "Biblioteca vacía" : "Sin resultados") :
-                title + (selection.length == 1 ? " · %u pista" : " · %u pistas").printf (selection.length);
-            if (library.length == 0) heading.label = empty_title;
-            selection_hint.label = selection.length == 0 ? (library.length == 0 ? empty_hint : "Probá con otra búsqueda") :
-                "Activá una canción para insertarla a continuación y reproducirla";
+            if (library.length == 0) set_library_summary (empty_title, empty_hint);
+            else if (selection.length == 0) set_library_summary ("Sin resultados", "Probá con otro título, artista o álbum");
+            else {
+                string count = track_count_text (selection.length);
+                set_library_summary (title, album_selected ? selection[0].artist + " · " + count : count);
+            }
             foreach (var track in selection) track_store.append (track);
             update_player ();
         }
+        private void set_library_summary (string title, string subtitle = "") {
+            heading.label = title;
+            heading.tooltip_text = title;
+            selection_hint.label = subtitle;
+            selection_hint.tooltip_text = subtitle == "" ? null : subtitle;
+            selection_hint.visible = subtitle != "";
+            selection_menu.visible = visible_tracks.length > 0;
+            show_all_tracks.visible = browsing_page != "songs";
+            bool searching = search.text.strip () != "";
+            show_all_tracks.label = searching ? "Ver pistas de la búsqueda" : "Ver todas las pistas";
+            if (selection_menu.visible) {
+                string scope = selected_album != null ? "Acciones del álbum" :
+                    selected_artist != null ? "Acciones del artista" :
+                    searching ? "Acciones de los resultados" : "Acciones de la biblioteca";
+                selection_menu.tooltip_text = scope;
+                selection_menu.update_property (Gtk.AccessibleProperty.LABEL, scope, -1);
+            }
+        }
+
+        private static string track_count_text (uint count) {
+            return (count == 1 ? "%u pista" : "%u pistas").printf (count);
+        }
+
         private void extract_album_color (Gdk.Texture texture) {
             var sample = Gdk.pixbuf_get_from_texture (texture).scale_simple (16, 16, Gdk.InterpType.BILINEAR);
             unowned uint8[] pixels = sample.get_pixels ();
@@ -1432,7 +1584,7 @@ namespace Music {
                 return;
             }
             var tint = album_color;
-            tint.alpha = theme.dark ? 0.36f : 0.22f;
+            tint.alpha = theme.dark ? 0.22f : 0.14f;
             // Only these two widget contexts use this provider; other windows keep their theme.
             string css = ".album-backdrop { background-image: linear-gradient(to bottom, %s 0px, transparent 420px); }\n".printf (tint.to_string ()) +
                 "headerbar { background: transparent; box-shadow: none; }";
@@ -1450,7 +1602,8 @@ namespace Music {
             int selected_index = selected == null ? -1 : queue.find (selected);
             queue_selection.selected = selected_index < 0 ? Gtk.INVALID_LIST_POSITION : (uint) selected_index;
             queue_empty.visible = queue.entries.length == 0;
-            queue_count.label = (queue.entries.length == 1 ? "%u pista" : "%u pistas").printf (queue.entries.length);
+            queue_count.visible = queue.entries.length > 0;
+            queue_count.label = track_count_text (queue.entries.length);
             clear_button.sensitive = queue.entries.length > (queue.current == null ? 0 : 1);
             undo_button.sensitive = queue.can_undo;
         }
@@ -1468,22 +1621,24 @@ namespace Music {
                 now_cover_data = null;
                 now_playing.label = "Nada en reproducción";
                 now_cover.set_from_icon_name ("audio-x-generic-symbolic");
+                now_cover.pixel_size = 22;
                 now_cover_uri = null;
                 return;
             }
             if (now_cover_uri != track.uri || now_cover_data != track.cover_data) {
                 now_cover.set_from_icon_name ("audio-x-generic-symbolic");
+                now_cover.pixel_size = 22;
                 now_cover_uri = track.uri;
                 now_cover_data = track.cover_data;
                 if (track.cover_data != null) {
-                    try { now_cover.set_from_paintable (Gdk.Texture.from_bytes (track.cover_data)); }
+                    try {
+                        now_cover.set_from_paintable (Gdk.Texture.from_bytes (track.cover_data));
+                        now_cover.pixel_size = 48;
+                    }
                     catch (Error e) { }
                 }
             }
             now_playing.label = track.title + "\n" + track.artist;
-            info.label = track.title + "\n\nArtista: " + track.artist + "\nÁlbum: " + track.album +
-                "\nPista: " + (track.number == 0 ? "Sin número" : track.number.to_string ()) +
-                "\nDuración: " + time_text ((double) track.duration / Gst.SECOND) + "\n\n" + track.uri;
 
         }
         private static Gtk.Label text_label (string text) {

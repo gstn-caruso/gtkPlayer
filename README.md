@@ -1,9 +1,10 @@
 # GTK Player
 
 Reproductor nativo para Linux escrito en Vala, GTK 4, libadwaita y GStreamer.
-Carga música de una carpeta local o SMB. La biblioteca abre en una grilla de
-álbumes y también ofrece Artistas y Canciones. La cola editable y los datos del
-artista quedan a la derecha, con los controles de reproducción abajo.
+Carga música de una carpeta local o SMB. La columna izquierda alterna entre
+Álbumes, con carátulas, y Artistas, con retratos. El centro muestra la grilla
+de álbumes o las canciones del álbum abierto. La cola editable queda a la
+derecha y los controles de reproducción abajo.
 
 ## Requisito obligatorio: GNOME HIG
 
@@ -60,7 +61,7 @@ Una ubicación válida queda guardada aunque falle la lectura; una URI inválida
 se rechaza sin modificar la configuración ni la biblioteca. Si no se puede
 guardar, no se inicia la carga de esa elección. La biblioteca vacía orienta a
 Preferencias. La carga, la cancelación, el error y la ausencia de resultados
-conservan mensajes distintos al cambiar entre Álbumes, Artistas y Canciones.
+conservan mensajes distintos al cambiar entre Álbumes y Artistas.
 Los conteos distinguen singular y plural, por ejemplo «1 pista cargada · 1 archivo de audio omitido».
 
 SMB utiliza GIO/GVfs y el diálogo de autenticación del sistema. Se necesita
@@ -123,7 +124,7 @@ El coste de monitores escala con directorios y el de enumeración con entradas,
 no hay sondeo rápido continuo. Un fallo o cancelación del escaneo no guarda
 caché; la comparación y escritura reciben la misma cancelación, que no revierte
 una escritura ya terminada. Durante una actualización
-automática se intenta restaurar artista/álbum, ramas abiertas y pista seleccionada
+automática se intenta restaurar artista, álbum abierto y pista seleccionada
 por URI si aún existen; la cola y reproducción no se reemplazan. Queda por
 verificar el foco durante la reconciliación en una sesión de escritorio.
 No se roba foco hacia Cancelar por una carga automática. No es actualización
@@ -143,10 +144,15 @@ autenticación o accesibilidad; **HIG NO APROBADO**.
 
 ## Explorar y editar la cola
 
-Buscá por título, artista o álbum con **Ctrl+F**. Activá una portada para ver
-el álbum y sus pistas. Al activar una canción, se inserta después de la actual
-y empieza a sonar. Las entradas previas y pendientes quedan disponibles. Al
-activar una entrada de la cola se reproduce esa misma entrada.
+Buscá por título, artista o álbum con **Ctrl+F**. En la columna izquierda,
+desplegá un álbum para ver sus canciones debajo o un artista para ver sus
+álbumes. También podés desplegar esos álbumes hasta llegar a las canciones.
+Activar el nombre de un álbum abre sus pistas en el centro y activar el
+nombre de un artista muestra su grilla de álbumes. La flecha permite plegar
+o desplegar la rama. El menú central incluye **Ver todas las pistas**. Al
+activar una canción, se inserta después de la actual y empieza a sonar.
+Las entradas previas y pendientes quedan disponibles. Al activar una entrada
+de la cola se reproduce esa misma entrada.
 
 El menú de cada canción o álbum ofrece **Agregar a la cola**, **Reproducir a
 continuación** y **Reproducir ahora**. Agregar mantiene el orden de las pistas
@@ -179,18 +185,16 @@ Una sesión ilegible abre con la cola vacía.
 
 ## Retratos públicos de artistas
 
-Al abrir un álbum o un artista, la tarjeta **Sobre el artista**
-en Datos consulta Wikipedia y Wikimedia Commons para mostrar un retrato,
-separado de la carátula del álbum y de los controles de reproducción.
-Se envía el nombre del artista seleccionado a esos servicios, no la biblioteca,
-sus archivos ni sus rutas. No se consulta automáticamente toda la biblioteca.
-Autor y nombre de licencia se muestran como texto plano, con enlaces nativos a
-la licencia y a la fuente de Commons. Sin foto válida queda el icono genérico;
-los fallos de red no impiden navegar ni reproducir.
+La pestaña **Artistas** consulta Wikipedia y Wikimedia Commons para obtener
+retratos de los nombres visibles en la lista, de a uno. Las consultas envían
+nombres de artistas. Al activar la miniatura se muestran el autor y los
+enlaces a la licencia y a Wikimedia Commons. Cuando falta un retrato válido
+se muestra un avatar genérico y la navegación sigue disponible.
 
 La caché guarda solo en memoria hasta doce retratos por ventana; no escribe
-fotos en disco ni persiste entre sesiones. Se cancelan consultas al cambiar de
-artista o cerrar y se descartan respuestas obsoletas.
+fotos en disco ni persiste entre sesiones. Se cancelan las consultas al
+cerrar la vista de Artistas o la ventana. Las filas reutilizadas descartan
+respuestas que pertenecen a otro artista.
 
 El proveedor exige resumen Wikipedia estándar, título coincidente y una
 descripción con ocupación musical explícita (por ejemplo singer, songwriter,
@@ -206,12 +210,13 @@ HTTPS/dominios, redirecciones, tamaño, formato, archivo Commons y licencia.
 ## Ancho de las columnas
 
 Arrastrá cualquiera de los dos separadores nativos para dar más o menos ancho
-a Biblioteca, pistas o Datos/Cola. Se pueden estrechar hasta casi colapsarlas:
+a Biblioteca, pistas o Cola. Se pueden estrechar hasta casi colapsarlas:
 el límite es el espacio de la ventana y el ancho físico de los separadores,
 no un mínimo impuesto por el texto. El contenido que no entra queda recortado
 sin invadir la columna vecina; arrastrá el separador de vuelta para recuperarlo.
-En ventanas de menos de 1100 px lógicos, Biblioteca y Cola/Datos se abren
-como paneles superpuestos desde el encabezado. Al volver a una ventana amplia,
+En ventanas de menos de 1100 px lógicos, Biblioteca y Cola se abren como
+paneles superpuestos desde el encabezado. **F9** abre y cierra la cola en
+ese modo. Al volver a una ventana amplia,
 se recupera la proporción elegida para ambos separadores. El ajuste no se
 guarda al cerrar.
 
@@ -297,9 +302,9 @@ jurisdicción, rechazo de redirecciones y rechazo de la ciudad Boston pese a
 título exacto e imagen libre. La suite UI tiene **45 casos** (uno de arrastre X11 opcional), incluida la actualización automática local de
 1 → 3 → 2 pistas al crear carpetas anidadas y copiar/eliminar WAV reales, con
 una publicación para la ráfaga y otra para la eliminación, y la reapertura con
-fuente offline y persistencia real en un directorio de caché aislado, además del
-retrato con créditos separado de la carátula y el cambio de artista durante una
-consulta fallida sin restaurar foto/créditos anteriores. Estas suites no
+fuente offline y persistencia real en un directorio de caché aislado, además de
+los créditos de la miniatura, la carátula del álbum y el filtrado de artistas
+durante una descarga sin recuperar la foto anterior. Estas suites no
 consultan Wikimedia real. El smoke público de Charly García, Divididos y Amy
 Winehouse y la captura de Charly se registran por separado en la
 [matriz HIG](docs/gnome-hig.md); no sustituyen regresiones offline ni certifican
