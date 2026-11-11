@@ -622,3 +622,129 @@ y captura en `build/queue-only-preview/compact-1024-large-text.png`.
 **HIG NO APROBADO**.
 
 [portrait-popovers]: https://developer.gnome.org/hig/patterns/containers/popovers.html
+
+## Detalle del álbum y formato de audio — 2026-11-10
+
+Cambios locales en `feat/album-experience`. La captura de Spotify aportada
+por el usuario orienta la jerarquía visual, no sustituye las pautas HIG.
+Se consultaron las fuentes oficiales de [botones][buttons], [búsqueda][album-search],
+[estilo][style], [adaptación][adaptive], [teclado][keyboard] y
+[accesibilidad][a11y-tests] antes de implementar.
+
+| Cambio y pauta | Evidencia y alcance | Próxima comprobación |
+| --- | --- | --- |
+| Álbum sin filtro y búsqueda global ([búsqueda][album-search], [teclado][keyboard]) | El detalle oculta la entrada; abrir un resultado parcial muestra todas las canciones del álbum exacto, conservando artista e identidad. Volver conserva la consulta; Ctrl+F regresa a la biblioteca y enfoca «Buscar en la biblioteca». `/ui/visual-album-queue-actions-search-artwork` comprueba dos pistas completas desde una búsqueda que solo encuentra una. La búsqueda general permanece disponible para bibliotecas que exceden la vista. | Comprobar vuelta al resultado y conservación de foco tras actualizaciones del origen, también con Orca. El filtro local del álbum deja de aplicar; esto no elimina la búsqueda general requerida para colecciones grandes. |
+| Acciones bajo la carátula ([botones][buttons], [estilo][style], [nombres][names]) | Una sola acción sugerida inicia, pausa o continúa el álbum. Los botones contiguos de 48 px agregan a la cola y reproducen a continuación; el menú conserva sus otras acciones. Se usan iconos, tooltips y nombres accesibles castellanos, sin mezclar icono y texto en cada botón. Las dimensiones son decisión de producto. El estado se comunica con icono y nombre del botón, más «Reproduciendo»/«En pausa» en la pista y la cola; el color no es el único indicador. `/ui/album-transport-formats-adaptation` comprueba foco, activación nativa, pausa/continuación sin duplicados y orden de inserción sin interrumpir la actual. | Probar locución en Orca durante las transiciones y el regreso del foco al cerrar menús en GNOME. Los controles de descarga, favoritos y servicios de Spotify no aplican a esta biblioteca local y no se incorporan. |
+| Resumen y formato ([tipografía][visual-typography], [listas][visual-lists], [nombres][names]) | El resumen muestra tipo «Álbum», artista, cantidad y duración total. GStreamer aporta formato, frecuencia, canales y profundidad o bitrate disponibles; no se infiere calidad de la extensión. La profundidad se limita a códecs identificados como PCM, FLAC o ALAC; valores ausentes no se inventan. Álbumes con distintas características lo indican. Cada fila muestra el formato y su tooltip detalla el audio; la etiqueta también expone la descripción accesible. El caso `/library/recursive-tags-no-symlinks` verifica un FLAC real, persistencia en caché/sesión y enriquecimiento de caché anterior. | Revisar archivos multicanal, varios flujos, frecuencias poco frecuentes y bibliotecas con datos ausentes. El resumen usa el primer flujo de audio descubierto. Las reglas de encabezados y redimensionado de columnas no aplican a estas filas sin encabezados; se conservan los separadores manuales entre paneles. |
+| Adaptación y accesibilidad ([adaptación][adaptive], [accesibilidad][a11y-tests]) | El nuevo caso UI verifica acciones visibles, espacio para las pistas y superficie de 1024×600 con Sans 18. Los casos existentes conservan proporciones de paneles y arrastre nativo. Capturas de fixtures y registros se guardan bajo `build/album-*`. | Verificar escalado del sistema, contraste con carátulas reales variadas, teclado en pantalla y lectura completa en sesión GNOME. Xvfb y `GTK_A11Y=none` no prueban la locución. |
+
+La compilación local terminó correctamente y pasaron **75/75 casos en claro**
+(23 core, 46 UI y 6 retratos), más **46/46 UI en oscuro**, con el arrastre X11
+opcional habilitado en ambos temas. El caso nuevo también pasó con alto
+contraste y Sans 18. Registros: `build/album-build.log`,
+`build/album-tests-{light,dark}.log` y `build/album-high-contrast.log`.
+Entorno: GTK 4.22.4, libadwaita 1.9.1, GStreamer 1.28.2, Xvfb, Cairo,
+GSettings en memoria, GIO local, `fakesink` y `GTK_A11Y=none`. Persisten los
+avisos de deprecación/C generado y EGL/DRI3. No se verificó audio real, SMB,
+las versiones mínimas declaradas ni CI remoto.
+
+Una comprobación aparte con AT-SPI activo y eventos X11 verificó Ctrl+F,
+Tab y Enter para encontrar y abrir un álbum; Espacio para iniciar/pausar;
+Tab y Espacio para agregar y programar el álbum; apertura del menú, Escape
+y retorno a la búsqueda general con Ctrl+F. El árbol expuso los cuatro
+nombres de acciones y el foco pasó al botón de reproducción al abrir el
+álbum. Captura y registro: `build/album-preview/keyboard-dark.png` y
+`build/album-preview/keyboard.log`, con música y carátulas de prueba. Se
+inspeccionaron esa captura oscura y las del caso nuevo en claro y alto
+contraste, incluida 1024×600 con Sans 18. AT-SPI no sustituye escuchar Orca.
+
+Este trabajo no incluye integración, push ni release. La
+autorización anterior del árbol y la cola no se amplía a estos cambios.
+**HIG NO APROBADO**; identidad y licencia continúan pendientes.
+
+[album-search]: https://developer.gnome.org/hig/patterns/nav/search.html
+
+## Visualizador nativo restringido — 2026-11-11
+
+Trabajo local en `feat/native-visualizer`, conservando los cambios de álbumes
+que ya estaban en el árbol. El usuario eligió projectM nativo y pidió efectos
+aleatorios ya configurados. La web de MilkDrop 3 y su guía Linux se consultaron:
+el original requiere Wine; esta implementación no promete sus funciones exclusivas.
+Antes de cambiar la UI se consultaron las pautas oficiales de
+[ventanas][windows], [adaptación][adaptive], [accesibilidad][a11y-tests],
+[atajos estándar](https://developer.gnome.org/hig/reference/keyboard.html) y
+[controles superpuestos](https://developer.gnome.org/hig/patterns/controls/overlaid.html).
+
+| Cambio y pauta | Evidencia y alcance | Próxima verificación / condición de cierre |
+| --- | --- | --- |
+| Ventana de visualización ([ventanas][windows]) | `VisualizerWindow` es redimensionable y secundaria, vinculada a la biblioteca; cierra con ella y no detiene la música al cerrar por separado. Se usa la excepción no modal para visualizar el mismo audio mientras se controla la reproducción desde la principal. `/ui/visualizer-play-pause-reopen-owner-close` comprueba apertura única, ausencia de autoplay, pausa, reapertura, cierre independiente y cierre por el propietario. | Validar agrupación, foco y ciclo de cierre en GNOME real, también al salir desde el escritorio. La clasificación como secundaria y el uso no modal se justifican por esta función complementaria; el patrón modal de preferencias no corresponde a este visor. No se restaura el visor al iniciar, por lo que la regla de restaurar su tamaño con contenido reabierto no aplica. |
+| Pantalla completa y controles ([adaptación][adaptive], controles superpuestos) | Cabecera nativa en ventana; OSD con salir/cerrar en pantalla completa, visible con puntero, toque y teclado. Se conserva mientras tenga foco. Prueba en Weston headless de entrada/salida real a 1024×600 y retorno a 640×400, con dibujo GL opaco y coloreado. Las capturas `build/visualizer-final-wayland-visualizer{,-fullscreen}.png` se inspeccionaron. | Verificar toque físico, ocultación del OSD, escalado HiDPI, movimiento entre monitores y redimensionado desde el escritorio. La superposición aplica a este contenido visual sin edición; no se generaliza a los paneles de biblioteca. Los separadores y el ajuste manual existente permanecen. |
+| Teclado y nombres ([teclado][keyboard], [nombres][names]) | F11 alterna, Esc vuelve a ventana y Ctrl+W cierra. Las etiquetas accesibles son castellanas y el foco vuelve al botón de pantalla completa. El caso opcional `GTKPLAYER_TEST_FULLSCREEN=1` emite señales del controlador y comprueba los cambios reales del compositor; Ctrl+W comprueba que sigue reproduciendo. No son eventos físicos. | Recorrido completo con teclado físico, foco visible, AT-SPI/Orca y teclado en pantalla en sesión GNOME. F11 es una convención de producto; no se atribuye un mandato específico a la tabla HIG de atajos. |
+| Estados y animación ([estados vacíos][empty], [accesibilidad][a11y-tests]) | Guía nativa sin música, imagen detenida en pausa y estado de error si falta GL. El visualizador es optativo y no se abre automáticamente. Cinco efectos originales internos, cambios suaves y aleatorios sin repetición inmediata; no hay editor, selector ni descargas. La prueba prolongada observó cambio automático después de unos 20 s y unas 595 imágenes. | Probar fallo real de OpenGL, lectura de estados con Orca y preferencias de accesibilidad del escritorio. Los efectos no tienen por objetivo satisfacer contraste de texto; los controles sí requieren contraste y foco verificables. No hay selector de archivos ni formulario de presets: esas pautas no aplican al alcance pedido. |
+
+Evidencia local: compilación correcta; **77/77 casos en claro** (24 core,
+47 UI, 6 retratos) y **47/47 UI en oscuro**, con arrastre X11 opcional habilitado.
+Registros: `build/visualizer-tests-{light,dark}.log`. El nuevo caso core
+`/player/visualizer-pcm-preserves-output-and-eos` verifica PCM no vacío,
+conservación de salida estéreo/48 kHz y fin de reproducción. La regresión de
+búsqueda en pausa detectada durante el desarrollo se resolvió retirando el sink
+de análisis; el tap final usa `identity` y convierte solo una copia mediante
+GstAudioConverter. El caso existente `/ui/footer-keyboard-playback` vuelve a pasar.
+El test visual comprueba píxeles opacos y coloreados, además del ciclo de vida;
+la comprobación prolongada y de pantalla completa está en
+`build/visualizer-wayland-test.log`.
+
+El caso focal también pasó en Weston a 1024×600 con alto contraste y Sans 18,
+incluidos F11 en ambos sentidos, Escape y Ctrl+W mediante señales del controlador
+identificado, esperando cuadros del compositor entre cambios. No se inyectaron
+eventos físicos. Se inspeccionaron las capturas
+`build/visualizer-large-contrast-visualizer{,-fullscreen}.png`; registro en
+`build/visualizer-large-contrast-test.log`. Esto no sustituye el recorrido real
+con teclado, toque y lector señalado como pendiente.
+
+Se verificó instalación en DESTDIR y se construyó e inspeccionó el `.deb` local,
+incluida la biblioteca compartida privada, el archivo fuente oficial completo,
+el parche y avisos originales. El empaquetado usó `nocheck` porque las suites
+se ejecutaron por separado. Registro: `build/visualizer-package.log`.
+Entorno local: Ubuntu 26.04, GTK 4.22.4, libadwaita 1.9.1, GStreamer 1.28.2,
+Xvfb y Weston headless con Mesa; audio de prueba y `fakesink`, sin micrófono,
+NAS ni audio público. Persisten advertencias de deprecación/C generado y del
+renderizador software. Esto no comprueba Ubuntu 24.04, hardware de audio/GPU
+real, lector de pantalla ni el pipeline remoto. **HIG NO APROBADO**.
+No se hizo commit, push, integración ni publicación; la excepción del incremento
+anterior no se amplía. Identidad y licencia de la aplicación siguen pendientes;
+los avisos de terceros se describen en [projectm.md](projectm.md).
+
+### Flechas para cambiar de preset — pedido posterior del 2026-11-11
+
+El usuario amplió el alcance y precisó «simplemente flechas, <- y ->».
+Se consultaron de nuevo [botones](https://developer.gnome.org/hig/patterns/controls/buttons.html)
+y [controles superpuestos](https://developer.gnome.org/hig/patterns/controls/overlaid.html).
+Se agregan dos botones GTK con iconos nativos de flecha, sin menú ni selector,
+tanto en la cabecera como en el OSD. Los nombres accesibles y tooltips son
+«Preset anterior» y «Preset siguiente»; se deshabilitan sin visualización
+disponible. Recorren circularmente los cinco efectos. El automático aleatorio
+continúa y las transiciones manuales en reproducción son suaves. En pausa se
+cambia una imagen sin reanudar audio ni mantener un temporizador de animación.
+
+El caso `/ui/visualizer-play-pause-reopen-owner-close` comprueba sensibilidad,
+foco y activación GTK, avance/retroceso, vuelta completa por los cinco presets,
+cambio en pausa conservando el estado del transporte y ausencia de animación
+continua. El modo opcional de pantalla completa comprueba ambas flechas del
+OSD y que después sigue produciéndose un cambio automático. El caso focal
+X11 pasó; captura inspeccionada: `build/preset-arrows-visualizer.png` y registro
+`build/preset-arrows-test.log`. No son pulsaciones físicas ni lectura de Orca.
+Próximas comprobaciones: activar ambos botones con teclado/puntero/toque reales,
+anuncio de nombres por lector y visibilidad del foco durante ocultación del OSD.
+No cambian los paneles ni sus separadores. **HIG NO APROBADO**.
+
+Verificación final de las flechas: **47/47 UI verdes**, con arrastre X11
+habilitado (`build/preset-arrows-ui.log`). El caso prolongado pasó también con
+Weston a 1024×600, alto contraste y Sans 18: flechas en ambos modos, pausa,
+atajos de pantalla completa y cambio automático posterior al manual; registro
+`build/preset-arrows-wayland.log`. Se inspeccionó la captura
+`build/preset-arrows-contrast-visualizer-fullscreen.png`. El helper de capturas
+reintenta cuadros invalidados durante la transición, conservando la aserción
+si no aparece contenido. AT-SPI en la sesión del escritorio expuso los dos
+nombres y botones visibles en la aplicación actualizada; no se escuchó Orca.
+Esta ampliación no reconstruyó el paquete ni verificó CI remoto.

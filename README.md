@@ -23,6 +23,23 @@ build/paquete exitoso, release omitido). El futuro commit documental aún necesi
 su propio CI verde; integración y prerelease no están ejecutados en ese corte.
 Ver también [las instrucciones del proyecto](AGENTS.md).
 
+## Visualizador
+
+El botón **Abrir visualizador** del encabezado abre una ventana nativa con
+projectM, ya configurada con cinco efectos que cambian aleatoriamente y
+reaccionan al audio reproducido. No requiere elegir presets ni ajustar opciones.
+Las flechas **← y →** permiten cambiar al preset anterior o siguiente,
+también en pantalla completa y en pausa; el cambio automático continúa activo.
+Usá el botón de pantalla completa o **F11**; **Esc** vuelve a ventana y
+**Ctrl+W** cierra el visualizador sin detener la música. En pantalla completa,
+mover el puntero, tocar o usar el teclado muestra los controles. En pausa se
+conserva la imagen y se suspende la animación; al detener, se muestra una guía.
+El visualizador se cierra al cerrar la biblioteca. Requiere OpenGL 3.3.
+
+Es compatible con la tecnología MilkDrop mediante projectM; no incluye las
+funciones exclusivas de MilkDrop 3. La interfaz permite abrir/cerrar, cambiar de preset y alternar
+ventana/pantalla completa. Ver [motor, compilación y avisos](docs/projectm.md).
+
 ## Usar la biblioteca
 
 La ubicación inicial editable es `smb://nas.local/public/multimedia/Música`.
@@ -154,6 +171,20 @@ activar una canción, se inserta después de la actual y empieza a sonar.
 Las entradas previas y pendientes quedan disponibles. Al activar una entrada
 de la cola se reproduce esa misma entrada.
 
+El detalle del álbum muestra todas sus pistas, sin filtro de búsqueda, aunque
+lo hayas encontrado por el título de una canción. **Ctrl+F** vuelve a la
+búsqueda general y conserva la consulta anterior. Debajo de la carátula están
+**Reproducir/Pausar álbum**, **Agregar álbum a la cola**, **Reproducir álbum a
+continuación** y el menú. Pausar y continuar conservan la canción y la cola.
+La pista actual se identifica con texto («Reproduciendo» o «En pausa»).
+
+El resumen incluye duración total y formato de audio, con frecuencia de
+muestreo, canales y profundidad o bitrate cuando el archivo los informa.
+Si las pistas tienen características distintas, se indica «Formatos de audio
+variados»; cada fila muestra su formato y ofrece el detalle al pasar el puntero.
+Los datos proceden de GStreamer, no de la extensión del archivo. Se conservan
+en caché y en la sesión; una caché anterior se enriquece al volver a escanear.
+
 El menú de cada canción o álbum ofrece **Agregar a la cola**, **Reproducir a
 continuación** y **Reproducir ahora**. Agregar mantiene el orden de las pistas
 y deja la reproducción detenida si todavía no empezó. La misma canción puede
@@ -262,7 +293,9 @@ Para oscuro, usar `GTKPLAYER_TEST_COLOR_SCHEME=dark` y otra ruta de captura.
 
 ## Compilar, probar y ejecutar
 
-Herramientas: compilador C, Vala, Meson >= 1.0, Ninja y pkgconf.
+Herramientas: compiladores C/C++, Vala, Meson >= 1.0, CMake >= 3.21, Ninja y pkgconf.
+El motor projectM fijado se descarga y verifica durante la primera configuración;
+se necesita red o su archivo fuente en `subprojects/packagecache/`.
 Bibliotecas de desarrollo: GLib/GIO, GTK 4 >= 4.10, libadwaita >= 1.4,
 GStreamer, GStreamer pbutils, libsoup 3 y JSON-GLib. No se usa libgee.
 En Debian/Ubuntu, los nombres exactos de paquetes requeridos están en
@@ -299,7 +332,7 @@ Además de las suites core y UI, `meson test -C build artist-photos --print-erro
 ejecuta **seis casos offline** con servidor loopback controlado: bytes y
 atribución, título canónico de archivo, licencia sin barra final, licencia con
 jurisdicción, rechazo de redirecciones y rechazo de la ciudad Boston pese a
-título exacto e imagen libre. La suite UI tiene **45 casos** (uno de arrastre X11 opcional), incluida la actualización automática local de
+título exacto e imagen libre. La suite UI tiene **46 casos** (uno de arrastre X11 opcional), incluida la actualización automática local de
 1 → 3 → 2 pistas al crear carpetas anidadas y copiar/eliminar WAV reales, con
 una publicación para la ráfaga y otra para la eliminación, y la reapertura con
 fuente offline y persistencia real en un directorio de caché aislado, además de

@@ -1,0 +1,6 @@
+[wrap-file]
+directory = libprojectM-4.1.8
+source_url = https://github.com/projectM-visualizer/projectm/releases/download/v4.1.8/libprojectM-4.1.8.tar.gz
+source_filename = libprojectM-4.1.8.tar.gz
+source_hash = f72135e8b8e5fd807f908537255b41ac7ba4830309265e830cb756535487239e
+diff_files = projectm/gtk-framebuffer.patch

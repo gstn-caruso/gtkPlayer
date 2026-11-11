@@ -1,0 +1,225 @@
+--- a/src/libprojectM/ProjectM.cpp
++++ b/src/libprojectM/ProjectM.cpp
+@@ -92,6 +92,9 @@
+ 
+ void ProjectM::RenderFrame()
+ {
++    // Preserve the GtkGLArea draw target while rendering internal passes.
++    GLint targetFramebuffer = 0;
++    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &targetFramebuffer);
+     // Don't render if window area is zero.
+     if (m_windowWidth == 0 || m_windowHeight == 0)
+     {
+@@ -167,7 +170,7 @@
+     m_activePreset->RenderFrame(audioData, renderContext);
+ 
+     // ToDo: Allow external apps to provide a custom target framebuffer.
+-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
++    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, targetFramebuffer);
+     glViewport(0, 0, renderContext.viewportSizeX, renderContext.viewportSizeY);
+ 
+ #ifdef USE_GLES
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -61,7 +61,7 @@
+ set(PROJECTM_SO_VERSION "4")
+ 
+ # Base filename of all installed libraries. Also used as package name in pkgconfig.
+-set(PROJECTM_LIBRARY_BASE_OUTPUT_NAME "projectM-${PROJECT_VERSION_MAJOR}")
++set(PROJECTM_LIBRARY_BASE_OUTPUT_NAME "gtkplayer-projectM-${PROJECT_VERSION_MAJOR}")
+ 
+ # The actual (full) library version of projectM
+ set(PROJECTM_LIB_VERSION "${CMAKE_PROJECT_VERSION}")
+--- a/src/libprojectM/MilkdropPreset/CMakeLists.txt
++++ b/src/libprojectM/MilkdropPreset/CMakeLists.txt
+@@ -24,7 +24,6 @@
+         COMMAND ${CMAKE_COMMAND}
+ 
+         ARGS
+-        -D SHADER_FILES="${SHADER_FILES_ARG}"
+         -D OUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}
+         -P ${CMAKE_CURRENT_SOURCE_DIR}/GenerateStaticShaders.cmake
+ 
+--- a/src/libprojectM/MilkdropPreset/GenerateStaticShaders.cmake
++++ b/src/libprojectM/MilkdropPreset/GenerateStaticShaders.cmake
+@@ -1,4 +1,20 @@
+ cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
++
++# Keep the pinned shader manifest local: Meson CMake import mangles list arguments.
++set(SHADER_FILES
++        Shaders/Blur1FragmentShaderGlsl330.frag
++        Shaders/Blur2FragmentShaderGlsl330.frag
++        Shaders/BlurVertexShaderGlsl330.vert
++        Shaders/PresetCompVertexShaderGlsl330.vert
++        Shaders/PresetMotionVectorsVertexShaderGlsl330.vert
++        Shaders/PresetShaderHeaderGlsl330.inc
++        Shaders/PresetWarpFragmentShaderGlsl330.frag
++        Shaders/PresetWarpVertexShaderGlsl330.vert
++        Shaders/TexturedDrawFragmentShaderGlsl330.frag
++        Shaders/TexturedDrawVertexShaderGlsl330.vert
++        Shaders/UntexturedDrawFragmentShaderGlsl330.frag
++        Shaders/UntexturedDrawVertexShaderGlsl330.vert
++        )
+ 
+ # Run as custom command in script mode if any shader file has changed.
+ # Recreates the MilkdropStaticShaders.hpp/.cpp files accordingly.
+--- a/src/libprojectM/Renderer/CMakeLists.txt
++++ b/src/libprojectM/Renderer/CMakeLists.txt
+@@ -17,7 +17,6 @@
+         COMMAND ${CMAKE_COMMAND}
+ 
+         ARGS
+-        -D SHADER_FILES="${TRANSITION_SHADER_FILES_ARG}"
+         -D OUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}
+         -P ${CMAKE_CURRENT_SOURCE_DIR}/GenerateBuiltInTransitionsResources.cmake
+ 
+--- a/src/libprojectM/Renderer/GenerateBuiltInTransitionsResources.cmake
++++ b/src/libprojectM/Renderer/GenerateBuiltInTransitionsResources.cmake
+@@ -1,4 +1,17 @@
+ cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
++
++# Keep the pinned shader manifest local: Meson CMake import mangles list arguments.
++set(SHADER_FILES
++        TransitionShaders/TransitionShaderBuiltInCircleGlsl330.frag
++        TransitionShaders/TransitionShaderBuiltInPlasmaGlsl330.frag
++        TransitionShaders/TransitionShaderBuiltInSimpleBlendGlsl330.frag
++        TransitionShaders/TransitionShaderBuiltInSweepGlsl330.frag
++        TransitionShaders/TransitionShaderBuiltInWarpGlsl330.frag
++        TransitionShaders/TransitionShaderBuiltInZoomBlurGlsl330.frag
++        TransitionShaders/TransitionVertexShaderGlsl330.vert
++        TransitionShaders/TransitionShaderHeaderGlsl330.frag
++        TransitionShaders/TransitionShaderMainGlsl330.frag
++        )
+ 
+ # Run as custom command in script mode if any shader file has changed.
+ # Recreates the BuiltInTransitionsResources.hpp file accordingly.
+--- a/src/libprojectM/CMakeLists.txt
++++ b/src/libprojectM/CMakeLists.txt
+@@ -58,7 +58,7 @@
+ 
+ # CMake cannot combine multiple static libraries using target_link_libraries.
+ # This syntax will pull in the compiled object files into the final library.
+-add_library(projectM
++add_library(gtkplayer_projectM
+         ${PROJECTM_DUMMY_SOURCE_FILE} # CMake needs at least one "real" source file.
+         $<TARGET_OBJECTS:Audio>
+         $<TARGET_OBJECTS:MilkdropPreset>
+@@ -66,15 +66,15 @@
+         $<TARGET_OBJECTS:hlslparser>
+         $<TARGET_OBJECTS:SOIL2>
+         $<TARGET_OBJECTS:projectM_main>
+-        $<TARGET_OBJECTS:projectM::Eval>
+-        )
+-
+-target_include_directories(projectM
++        )
++
++target_include_directories(gtkplayer_projectM
+         PUBLIC
+         "$<INSTALL_INTERFACE:${PROJECTM_INCLUDE_DIR}>"
+         )
+ 
+-target_link_libraries(projectM
++target_link_libraries(gtkplayer_projectM
++        PRIVATE projectM_eval
+         PUBLIC
+         ${PROJECTM_OPENGL_LIBRARIES}
+         libprojectM::API
+@@ -82,13 +82,13 @@
+         )
+ 
+ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+-    target_link_libraries(projectM
++    target_link_libraries(gtkplayer_projectM
+             PUBLIC
+             "-framework CoreFoundation"
+             )
+ endif()
+ 
+-set_target_properties(projectM PROPERTIES
++set_target_properties(gtkplayer_projectM PROPERTIES
+         VERSION "${PROJECTM_LIB_VERSION}"
+         SOVERSION "${PROJECTM_SO_VERSION}"
+         FOLDER libprojectM
+@@ -101,7 +101,7 @@
+             projectM_api_EXPORTS
+             )
+ 
+-    target_link_libraries(projectM
++    target_link_libraries(gtkplayer_projectM
+             PUBLIC
+             ${CMAKE_DL_LIBS}
+             )
+@@ -111,17 +111,17 @@
+             PROJECTM_STATIC_DEFINE
+             )
+ 
+-    set_target_properties(projectM PROPERTIES
++    set_target_properties(gtkplayer_projectM PROPERTIES
+             OUTPUT_NAME ${PROJECTM_LIBRARY_BASE_OUTPUT_NAME}
+             FOLDER libprojectM
+             )
+ endif()
+ 
+-add_library(libprojectM::projectM ALIAS projectM)
++add_library(libprojectM::projectM ALIAS gtkplayer_projectM)
+ 
+ if(ENABLE_INSTALL)
+ 
+-    install(TARGETS projectM
++    install(TARGETS gtkplayer_projectM
+             EXPORT libprojectMTargets
+             LIBRARY DESTINATION "${PROJECTM_LIB_DIR}" COMPONENT Runtime
+             RUNTIME DESTINATION "${PROJECTM_RUNTIME_DIR}" COMPONENT Runtime
+@@ -142,7 +142,7 @@
+         set_source_files_properties(ProjectM.cpp Audio/PCM.cpp PROPERTIES
+                 COMPILE_DEFINITIONS PROJECTM_STATIC_DEFINE
+                 )
+-        target_compile_definitions(projectM
++        target_compile_definitions(gtkplayer_projectM
+                 INTERFACE
+                 PROJECTM_STATIC_DEFINE
+                 )
+@@ -151,10 +151,10 @@
+ 
+     # CMake target exports
+ 
+-    # For use from a local projectM build tree (without installing)
++    # For use from a local gtkplayer_projectM build tree (without installing)
+     export(TARGETS
+             projectM_api
+-            projectM
++            gtkplayer_projectM
+             NAMESPACE libprojectM::
+             FILE projectM-exports.cmake
+             )
+@@ -211,10 +211,10 @@
+         endif()
+ 
+         set(PKGCONFIG_PACKAGE_NAME "${PROJECTM_LIBRARY_BASE_OUTPUT_NAME}")
+-        set(PKGCONFIG_PACKAGE_DESCRIPTION "projectM Music Visualizer")
++        set(PKGCONFIG_PACKAGE_DESCRIPTION "gtkplayer_projectM Music Visualizer")
+         set(PKGCONFIG_PACKAGE_REQUIREMENTS_ALL "opengl")
+ 
+-        generate_pkg_config_files(projectM ${PROJECTM_LIBRARY_BASE_OUTPUT_NAME})
++        generate_pkg_config_files(gtkplayer_projectM ${PROJECTM_LIBRARY_BASE_OUTPUT_NAME})
+ 
+     endif()
+ 
+--- a/vendor/projectm-eval/projectm-eval/CMakeLists.txt
++++ b/vendor/projectm-eval/projectm-eval/CMakeLists.txt
+@@ -141,3 +141,6 @@
+         )
+     endif()
+ endif()
++
++# Generated parser/scanner sources are moved by Meson CMake import.
++target_include_directories(projectM_eval PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+--- a/src/libprojectM/ProjectMCWrapper.cpp
++++ b/src/libprojectM/ProjectMCWrapper.cpp
+@@ -1,3 +1,5 @@
++// Meson CMake import groups per-source defines; the C API must stay exported.
++#undef PROJECTM_STATIC_DEFINE
+ #include "ProjectMCWrapper.hpp"
+ 
+ #include <projectM-4/projectM.h>

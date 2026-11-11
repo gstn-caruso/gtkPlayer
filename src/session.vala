@@ -30,6 +30,7 @@ namespace Music {
                 key.set_string (group, "album", track.album);
                 key.set_uint64 (group, "number", track.number);
                 key.set_uint64 (group, "duration", track.duration);
+                track.write_audio_info (key, group);
             }
             return key.to_data ();
         }
@@ -53,6 +54,7 @@ namespace Music {
                 track.album = key.get_string (group, "album");
                 track.number = (uint) key.get_uint64 (group, "number");
                 track.duration = key.get_uint64 (group, "duration");
+                track.read_audio_info (key, group);
                 restored += new QueueEntry (track, id);
             }
             result.entries = restored;

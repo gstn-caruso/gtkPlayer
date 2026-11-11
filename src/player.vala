@@ -27,12 +27,16 @@ namespace Music {
             if (before == Gst.State.PAUSED) pause ();
         }
         private double level = 0.7;
+        private AudioTap audio_tap;
+        public unowned AudioTap visualization { get { return audio_tap; } }
 
         public Player (PlayQueue queue, Gst.Element? sink = null) {
             Object (queue: queue);
             queue.current_removed.connect (removed_current);
             pipeline = Gst.ElementFactory.make ("playbin", "player");
+            audio_tap = new AudioTap ();
             if (pipeline == null) return;
+            if (visualization.filter != null) pipeline.set ("audio-filter", visualization.filter);
             if (sink != null) pipeline.set ("audio-sink", sink);
             // Audio library: never create a video output window.
             var video_sink = Gst.ElementFactory.make ("fakesink", null);
