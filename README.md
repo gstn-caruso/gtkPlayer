@@ -1,10 +1,9 @@
 # GTK Player
 
 Reproductor nativo para Linux escrito en Vala, GTK 4, libadwaita y GStreamer.
-Esta primera versión permite cargar una carpeta local o SMB, agrupar las pistas
-por álbum o artista, ver sus datos y reproducir una cola. Tiene panel de
-biblioteca a la izquierda, pistas en el centro, pestañas Datos/Cola a la derecha
-y controles de reproducción abajo. No es un cliente de Spotify.
+Carga música de una carpeta local o SMB. La biblioteca abre en una grilla de
+álbumes y también ofrece Artistas y Canciones. La cola editable y los datos del
+artista quedan a la derecha, con los controles de reproducción abajo.
 
 ## Requisito obligatorio: GNOME HIG
 
@@ -36,28 +35,32 @@ la ubicación o elegir una carpeta. **Aplicar y cargar** guarda la elección y
 carga su contenido; **Recargar** vuelve a leer la ubicación guardada. Cerrar
 Preferencias sin aplicar descarta la edición.
 
-Se recorre la carpeta de forma recursiva sin seguir enlaces simbólicos; la
-biblioteca aparece al terminar, no de manera progresiva. Durante el escaneo,
+Se recorre la carpeta de forma recursiva sin seguir enlaces simbólicos. Si hay
+una caché para esa ubicación, aparece antes de iniciar el escaneo; el resultado
+actualizado reemplaza esa instantánea al terminar, no de manera progresiva.
+La lectura y escritura de caché (incluidas carátulas) se realizan fuera del hilo
+GTK. Se puede seguir navegando y reproduciendo las pistas conocidas durante
+la actualización; una fuente offline conserva la instantánea. La carga al abrir
+y los reintentos automáticos no solicitan montaje. Si reciben `NOT_MOUNTED` con
+pistas en caché, tampoco muestran un aviso transitorio: el estado queda en
+Preferencias. **Recargar** y **Aplicar y cargar** sí pueden solicitar montaje,
+aunque existan pistas conocidas, que siguen visibles mientras se conecta.
+Otros errores, como `NOT_FOUND`, conservan el aviso de carga existente.
+Durante el escaneo,
 los controles de ubicación se deshabilitan y **Cancelar escaneo** está disponible
 solo en Preferencias. Los conteos de pistas cargadas y archivos omitidos, el
 estado de carga, la cancelación y el fin de cola se consultan allí: no hay una
 fila de estado ni espacio reservado debajo del encabezado principal. El resumen
 del álbum o selección y su contador de pistas permanecen en el panel central.
 Si la ubicación no está disponible, se conserva la biblioteca anterior. Los
-errores de carga, guardado y reproducción muestran un aviso nativo transitorio,
+demás errores de carga, guardado y reproducción muestran un aviso nativo transitorio,
 sin rutas ni URI, sobre los paneles y sin tapar los controles inferiores; el
 detalle completo queda en Preferencias.
 Una ubicación válida queda guardada aunque falle la lectura; una URI inválida
 se rechaza sin modificar la configuración ni la biblioteca. Si no se puede
-guardar, no se inicia la carga de esa elección. Un clic o toque en una pista inicia
-la cola con las pistas de la selección actual; también se puede activar una fila
-con el teclado. Una entrada de Cola se activa de la misma forma. La biblioteca
-vacía orienta a elegir una ubicación con música en Preferencias y la cola vacía
-explica cómo crearla. Un fallo de carga sin biblioteca tiene un mensaje distinto,
-además del aviso y su detalle en Preferencias. Quedan dos defectos conocidos en
-el código publicado en `7114a83`: cancelar la carga inicial sin biblioteca deja «Leyendo biblioteca…»
-y cambiar la agrupación tras un fallo sin biblioteca sustituye el error por un
-vacío válido (también puede anunciarlo durante la carga). Ver la [matriz HIG](docs/gnome-hig.md).
+guardar, no se inicia la carga de esa elección. La biblioteca vacía orienta a
+Preferencias. La carga, la cancelación, el error y la ausencia de resultados
+conservan mensajes distintos al cambiar entre Álbumes, Artistas y Canciones.
 Los conteos distinguen singular y plural, por ejemplo «1 pista cargada · 1 archivo de audio omitido».
 
 SMB utiliza GIO/GVfs y el diálogo de autenticación del sistema. Se necesita
@@ -68,7 +71,137 @@ comandos, variables persistentes ni Git. La aplicación solicita no guardar la
 contraseña; los montajes o credenciales previamente gestionados por el sistema
 son independientes. Solo se recuerda la ubicación al aplicar Preferencias, en
 `$XDG_CONFIG_HOME/gtkplayer/settings.ini` (normalmente
-`~/.config/gtkplayer/settings.ini`); no se persiste la biblioteca.
+`~/.config/gtkplayer/settings.ini`). La biblioteca se persiste por URI en
+`$XDG_CACHE_HOME/gtkplayer` (normalmente `~/.cache/gtkplayer`), en archivos INI
+nombrados con SHA-256 de la URI. Incluye metadatos, huellas de tamaño/fecha y
+carátulas, no el audio. Al guardar, las carátulas idénticas se almacenan una sola
+vez por contenido, con referencias a su identificador SHA-256 desde las pistas;
+al cargar, cada imagen referenciada se decodifica una vez y comparte sus `Bytes`
+inmutables, sin transformar los bytes originales. Esto ahorra espacio y memoria
+cuando varias pistas usan la misma portada. Se siguen leyendo las cachés anteriores
+con portada inline; si los datos no cambian, no se fuerza su migración.
+`Window` permite inyectar otro directorio de caché con
+su quinto argumento opcional `cache_path`. La caché ausente o corrupta no
+impide escanear y un fallo al guardarla no descarta la biblioteca cargada.
+El escáner recibe solo antecedentes de la misma URI y reutiliza metadatos sin
+cambios según sus huellas.
+
+La biblioteca se actualiza automáticamente mediante `GFileMonitor`: un monitor
+por directorio descubierto, incluidas carpetas vacías, no por pista. La raíz se
+vigila antes de escanear; los demás directorios proceden del mismo recorrido del
+escáner, sin otro recorrido dedicado a descubrir monitores. Se instalan en el
+hilo GTK al finalizar el escaneo y se retiran los directorios desaparecidos.
+Los eventos se agrupan tras **1500 ms de quietud**. Solo hay una reconciliación
+en vuelo; los cambios recibidos durante ella quedan pendientes para otra pasada.
+Al instalar monitores nuevos se programa una pasada adicional para cubrir el
+intervalo entre enumeración e instalación; si la instantánea visible no cambia,
+no se reconstruye la vista ni se emite `library_updated`. La señal se emite en
+GTK después de aplicar una instantánea, nunca por evento bruto.
+
+En fuentes no nativas (como SMB), si falla crear un monitor, desaparece un
+directorio vigilado o falla la carga antes de completar la vigilancia de sus
+descendientes, se habilita además un fallback de **900 segundos** mientras
+esa ubicación esté activa. Cada tick solicita la misma reconciliación con
+debounce solo si no hay carga en vuelo ni trabajo pendiente: no reinicia la
+espera ya programada, incluso con un intervalo menor que los 1500 ms. No es un
+plazo exacto de actualización ni una garantía de eventos de red. Cancelar no
+habilita por sí mismo el fallback. Los reintentos automáticos no abren diálogos de montaje. Cerrar la ventana
+o cambiar de ubicación cancela monitores y temporizadores anteriores; cerrar
+cancela también el escaneo. **Recargar** sigue disponible como recuperación manual.
+
+Cada reconciliación enumera el árbol completo y consulta huellas, pero evita
+abrir audios intactos. Lee la caché completa (incluida la decodificación de
+carátulas) una vez en un worker; compara por URI todos los datos persistidos,
+incluidas huellas de audio y portada, en otro worker. Si no cambian, evita la
+serialización INI, codificación Base64 y escritura completas, aunque cambie el
+orden de enumeración. El escáner usa copias ligeras de las pistas y comparte
+solo los bytes inmutables de carátulas, sin alterar la base de comparación.
+Con cambios, incluso solo de huellas, se guarda la caché completa; una caché
+ausente o corrupta se reconstruye tras un escaneo correcto, también si queda
+vacía. Las cachés antiguas sin huellas se reanalizan y actualizan al obtenerlas.
+El coste de monitores escala con directorios y el de enumeración con entradas,
+no hay sondeo rápido continuo. Un fallo o cancelación del escaneo no guarda
+caché; la comparación y escritura reciben la misma cancelación, que no revierte
+una escritura ya terminada. Durante una actualización
+automática se intenta restaurar artista/álbum, ramas abiertas y pista seleccionada
+por URI si aún existen; la cola y reproducción no se reemplazan. Queda por
+verificar el foco durante la reconciliación en una sesión de escritorio.
+No se roba foco hacia Cancelar por una carga automática. No es actualización
+fila a fila: ordenar/reconstruir una vista modificada todavía ocurre en GTK.
+
+Evidencia local de recuperación anidada: el caso
+`/ui/givenCachedLibraryWithUnreadableNestedAlbum_whenAlbumRecoversWithoutRootEvents_thenFallbackRefreshesToTwoTracks`
+reprodujo el timeout conservando una pista en vista/caché y cero eventos raíz;
+tras la corrección pasó en 2,83 s (3,02 s incluido el proceso). Usa archivos y
+permisos locales reales, prueba y drena el monitor raíz antes de abrir la ventana
+y sobrescribe solo el intervalo de fallback a un segundo. Al recuperar permisos,
+observa dos pistas visibles y persistidas sin Recargar ni eventos raíz.
+`meson test -C build ui --print-errorlogs`: **39/39 UI verdes**, 28,67 s,
+con X11/Xvfb, Cairo, GIO local, GSettings en memoria, `fakesink` y
+`GTK_A11Y=none`. No se ejecutó la suite global ni se verificó SMB real,
+autenticación o accesibilidad; **HIG NO APROBADO**.
+
+## Explorar y editar la cola
+
+Buscá por título, artista o álbum con **Ctrl+F**. Activá una portada para ver
+el álbum y sus pistas. Al activar una canción, se inserta después de la actual
+y empieza a sonar. Las entradas previas y pendientes quedan disponibles. Al
+activar una entrada de la cola se reproduce esa misma entrada.
+
+El menú de cada canción o álbum ofrece **Agregar a la cola**, **Reproducir a
+continuación** y **Reproducir ahora**. Agregar mantiene el orden de las pistas
+y deja la reproducción detenida si todavía no empezó. La misma canción puede
+aparecer varias veces. Usá el menú de una entrada para moverla arriba, abajo o
+quitarla. Con el foco en la cola también podés usar **Alt+↑**, **Alt+↓** o
+**Supr**. Quitar la actual pasa a la siguiente si existe y conserva el estado de
+reproducción o pausa. **Vaciar cola** conserva la actual; **Deshacer** o
+**Ctrl+Z** recuperan el orden anterior hasta que vuelvas a editarla.
+
+Arrastrá canciones o álbumes a la cola para copiarlos, o arrastrá una entrada
+para cambiar su posición. **Escape** cancela el arrastre interno. También podés
+soltar archivos o carpetas accesibles desde el gestor de archivos, o agregarlos
+con los botones de la cola. Se respeta el orden de las fuentes recibidas; cada
+carpeta se recorre sin seguir enlaces simbólicos y se ordena por artista, álbum,
+número de pista, título y URI. La importación muestra actividad y el total de
+archivos omitidos. Cancelar descarta todo el lote; si una fuente es inaccesible,
+se informa el error sin solicitar montaje ni cambiar la ubicación configurada.
+
+En el menú del reproductor podés elegir **Detener al terminar esta canción**.
+Pausar conserva esa opción; detener o cambiar de canción la desactiva. Los
+errores detienen la reproducción y se detallan en Preferencias.
+
+La cola, la entrada actual y el tiempo transcurrido se guardan en
+`$XDG_CONFIG_HOME/gtkplayer/session.ini`, separado de Preferencias y de la
+caché de biblioteca. El guardado es atómico y se hace fuera del hilo GTK.
+No incluye audio, carátulas ni credenciales. La sesión se abre sin reproducir
+ni montar la fuente; al darle a Reproducir se busca la posición guardada.
+Una sesión ilegible abre con la cola vacía.
+
+## Retratos públicos de artistas
+
+Al abrir un álbum o un artista, la tarjeta **Sobre el artista**
+en Datos consulta Wikipedia y Wikimedia Commons para mostrar un retrato,
+separado de la carátula del álbum y de los controles de reproducción.
+Se envía el nombre del artista seleccionado a esos servicios, no la biblioteca,
+sus archivos ni sus rutas. No se consulta automáticamente toda la biblioteca.
+Autor y nombre de licencia se muestran como texto plano, con enlaces nativos a
+la licencia y a la fuente de Commons. Sin foto válida queda el icono genérico;
+los fallos de red no impiden navegar ni reproducir.
+
+La caché guarda solo en memoria hasta doce retratos por ventana; no escribe
+fotos en disco ni persiste entre sesiones. Se cancelan consultas al cambiar de
+artista o cerrar y se descartan respuestas obsoletas.
+
+El proveedor exige resumen Wikipedia estándar, título coincidente y una
+descripción con ocupación musical explícita (por ejemplo singer, songwriter,
+musician, composer o rapper) o tipo de conjunto (rock band, jazz band,
+musical group u orchestra). Es un filtro conservador de la descripción inglesa,
+no una prueba de identidad MusicBrainz ni cobertura universal: sin descripción,
+con ambigüedad o sin esa evidencia se omite el retrato. La palabra genérica
+«music», el nombre del archivo o una licencia libre no bastan. No se fuerzan
+consultas alternativas de homónimos; nuevas categorías requieren adjudicación
+con evidencia antes de ampliar el filtro. Se conservan además los controles de
+HTTPS/dominios, redirecciones, tamaño, formato, archivo Commons y licencia.
 
 ## Ancho de las columnas
 
@@ -77,20 +210,19 @@ a Biblioteca, pistas o Datos/Cola. Se pueden estrechar hasta casi colapsarlas:
 el límite es el espacio de la ventana y el ancho físico de los separadores,
 no un mínimo impuesto por el texto. El contenido que no entra queda recortado
 sin invadir la columna vecina; arrastrá el separador de vuelta para recuperarlo.
-El ajuste no reordena columnas ni se guarda al cerrar.
+En ventanas de menos de 1100 px lógicos, Biblioteca y Cola/Datos se abren
+como paneles superpuestos desde el encabezado. Al volver a una ventana amplia,
+se recupera la proporción elegida para ambos separadores. El ajuste no se
+guarda al cerrar.
 
 ## Barra inferior nativa
 
-La barra conserva título/artista e icono genérico a la izquierda (no extrae
-carátulas), transporte centrado en una fila, tiempos a ambos lados del progreso
-en otra y volumen agrupado a la derecha. Usa controles GTK y clases de estilo de
-libadwaita 1.4 (`toolbar`, `circular`, `raised`, `numeric`, `dim-label`), sin CSS
-personalizado ni colores Spotify. El texto largo se elide; no hay altura fija
-que recorte texto o reduzca los botones. Anterior y Siguiente solo están activos
-cuando hay una pista en esa dirección de la cola. Reproducir/Pausar está activo
-si hay una pista visible que iniciar o una pista actual, que se puede pausar y
-retomar aunque cambie la ubicación o el grupo visible. Con biblioteca y cola
-vacías el transporte está deshabilitado; el volumen sigue siendo ajustable.
+La barra muestra la carátula, el título y el artista de la pista actual, con
+transporte centrado, tiempos a ambos lados del progreso y volumen a la derecha.
+Si no hay carátula válida se muestra el icono genérico. El texto largo se elide.
+Anterior y Siguiente se habilitan según la posición en la cola. Podés reanudar
+aunque haya cambiado la ubicación o la vista de biblioteca. Con biblioteca y
+cola vacías, el volumen sigue disponible.
 
 Para el footer se consultaron las guías oficiales de GNOME sobre
 [botones](https://developer.gnome.org/hig/patterns/controls/buttons.html),
@@ -127,7 +259,7 @@ Para oscuro, usar `GTKPLAYER_TEST_COLOR_SCHEME=dark` y otra ruta de captura.
 
 Herramientas: compilador C, Vala, Meson >= 1.0, Ninja y pkgconf.
 Bibliotecas de desarrollo: GLib/GIO, GTK 4 >= 4.10, libadwaita >= 1.4,
-GStreamer y GStreamer pbutils. No se usa libgee.
+GStreamer, GStreamer pbutils, libsoup 3 y JSON-GLib. No se usa libgee.
 En Debian/Ubuntu, los nombres exactos de paquetes requeridos están en
 [`debian/control`](debian/control), sección `Build-Depends`.
 Los tests además necesitan FFmpeg, plugins GStreamer base/good, Xvfb y xauth;
@@ -152,7 +284,31 @@ los tests:
 GIO_USE_VFS=local dbus-run-session -- meson test -C build --print-errorlogs
 ```
 
-Son dos suites: once casos core y veintiún UI. Cubren lectura de metadata FLAC
+La comprobación opcional de arrastre usa `xdotool` bajo Xvfb. Si ya está
+disponible, ejecutala con `GTKPLAYER_TEST_POINTER=1 meson test -C build ui
+--print-errorlogs`. La [matriz HIG](docs/gnome-hig.md#biblioteca-visual-y-cola-editable--2026-11-10)
+registra los resultados de esta rama y las comprobaciones que faltan en una
+sesión de escritorio.
+
+Además de las suites core y UI, `meson test -C build artist-photos --print-errorlogs`
+ejecuta **seis casos offline** con servidor loopback controlado: bytes y
+atribución, título canónico de archivo, licencia sin barra final, licencia con
+jurisdicción, rechazo de redirecciones y rechazo de la ciudad Boston pese a
+título exacto e imagen libre. La suite UI tiene **45 casos** (uno de arrastre X11 opcional), incluida la actualización automática local de
+1 → 3 → 2 pistas al crear carpetas anidadas y copiar/eliminar WAV reales, con
+una publicación para la ráfaga y otra para la eliminación, y la reapertura con
+fuente offline y persistencia real en un directorio de caché aislado, además del
+retrato con créditos separado de la carátula y el cambio de artista durante una
+consulta fallida sin restaurar foto/créditos anteriores. Estas suites no
+consultan Wikimedia real. El smoke público de Charly García, Divididos y Amy
+Winehouse y la captura de Charly se registran por separado en la
+[matriz HIG](docs/gnome-hig.md); no sustituyen regresiones offline ni certifican
+identidades futuras, caché, cierre durante descarga o accesibilidad.
+En el incremento de monitores se ejecutaron el caso focal, **34/34 UI y
+15/15 core**; no la suite global ni CI remoto. Ese caso no mide recursos con
+bibliotecas grandes ni verifica fallback de 15 minutos, SMB, eventos durante
+escaneo, cancelación de monitores o conservación de foco/álbum bajo actualización.
+La suite core contiene 23 casos. Las suites cubren lectura de metadata FLAC
 local, metadata sintética sin atributo opcional de enlace, recursión y enlaces,
 errores y cancelación inicial, límites de cola,
 fin de pista/avance, controles básicos, activación de la ventana con cuatro
@@ -254,11 +410,18 @@ Lintian informó `copyright-without-copyright-notice` (titular pendiente) y
 
 ## Límites y pendientes
 
-- No hay playlists persistentes/importadas, recientes ni carátulas reales.
+- La sesión recuerda una sola cola. No hay gestión de playlists ni recientes. Las carátulas locales
+  se leen de metadata incrustada o `cover.jpg`; los retratos públicos son independientes.
 - Los álbumes se agrupan por álbum **y artista de pista**: las compilaciones se
   separan por artista. No se usa artista de álbum ni número de disco.
-- No hay biblioteca incremental ni caché. Cancelar durante discovery puede
-  esperar al timeout de hasta 5 segundos del archivo actual.
+- No hay caché persistente de retratos públicos. Los monitores dependen del
+  backend GIO y de los límites de watches del sistema; el fallback remoto no
+  garantiza inmediatez. Falta medir bibliotecas grandes, pérdidas de eventos,
+  cambios concurrentes, foco/selección y recuperación de red en sesión real.
+  Cancelar durante discovery puede esperar al timeout de hasta 5 segundos del
+  archivo actual; la serialización de caché en curso termina en su hilo, aunque
+  la sustitución del archivo recibe la cancelación. No se puede deshacer una
+  escritura que ya terminó antes de cancelar.
 - Las pruebas de reproducción no validan completamente pausa/seek/volumen.
 - Acceso efectivo al NAS y autenticación SMB no comprobados por este empaquetado.
 - Hay una advertencia Vala preexistente sobre `Music.Track[]` como propiedad de

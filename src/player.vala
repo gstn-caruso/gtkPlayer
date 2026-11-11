@@ -8,10 +8,29 @@ namespace Music {
         private Gst.Element? pipeline;
         private uint watch;
         private string? loaded_uri;
+        private string? loaded_entry;
+        private Gst.State requested = Gst.State.NULL;
+        private double resume_position;
+        public bool stop_after_current { get; set; default = false; }
+        public double saved_position { get { return resume_position > 0 ? resume_position : position (); } }
+        public void restore_position (double seconds) { resume_position = double.max (0, seconds); }
+        public void activate (int index) {
+            if (!queue.select (index)) return;
+            stop ();
+            play ();
+        }
+        private void removed_current () {
+            var before = requested;
+            stop ();
+            if (queue.current == null || before == Gst.State.NULL) return;
+            play ();
+            if (before == Gst.State.PAUSED) pause ();
+        }
         private double level = 0.7;
 
         public Player (PlayQueue queue, Gst.Element? sink = null) {
             Object (queue: queue);
+            queue.current_removed.connect (removed_current);
             pipeline = Gst.ElementFactory.make ("playbin", "player");
             if (pipeline == null) return;
             if (sink != null) pipeline.set ("audio-sink", sink);
@@ -21,8 +40,9 @@ namespace Music {
             watch = pipeline.get_bus ().add_watch (Priority.DEFAULT, (bus, message) => {
                 switch (message.type) {
                 case Gst.MessageType.EOS:
+                    bool stop_here = stop_after_current;
                     stop ();
-                    if (queue.next ()) play ();
+                    if (!stop_here && queue.next ()) play ();
                     else finished ();
                     break;
                 case Gst.MessageType.ERROR:
@@ -31,6 +51,19 @@ namespace Music {
                     message.parse_error (out err, out debug);
                     stop ();
                     failure (err.message);
+                    break;
+                case Gst.MessageType.ASYNC_DONE:
+                    if (resume_position > 0) {
+                        double length = duration ();
+                        double target = length > 0 ? double.min (resume_position, double.max (0, length - 0.05)) : resume_position;
+                        if (!seek (target)) {
+                            stop ();
+                            failure ("No se pudo recuperar la posición guardada. Volvé a reproducir para empezar desde el inicio.");
+                        } else {
+                            resume_position = 0;
+                            if (requested == Gst.State.PLAYING) pipeline.set_state (Gst.State.PLAYING);
+                        }
+                    }
                     break;
                 case Gst.MessageType.STATE_CHANGED:
                     if (message.src == pipeline) {
@@ -49,23 +82,34 @@ namespace Music {
             if (queue.current == null) return;
             if (pipeline == null) { failure ("No está disponible el plugin playbin de GStreamer."); return; }
             string uri = playable_uri (queue.current.uri);
-            if (loaded_uri != uri || state == Gst.State.NULL) {
+            if (loaded_entry != null && loaded_entry != queue.current_entry.id) {
+                stop_after_current = false;
+                resume_position = 0;
+            }
+            if (loaded_uri != uri || loaded_entry != queue.current_entry.id || state == Gst.State.NULL) {
                 pipeline.set_state (Gst.State.NULL);
                 pipeline.set ("uri", uri);
                 loaded_uri = uri;
+                loaded_entry = queue.current_entry.id;
             }
-            if (pipeline.set_state (Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE) {
+            requested = Gst.State.PLAYING;
+            if (pipeline.set_state (resume_position > 0 ? Gst.State.PAUSED : Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE) {
                 stop ();
                 failure ("No se pudo iniciar la reproducción; comprobá el archivo y los plugins.");
             }
             changed ();
         }
         public void pause () {
+            requested = Gst.State.PAUSED;
             if (pipeline != null) pipeline.set_state (Gst.State.PAUSED);
         }
         public void stop () {
+            requested = Gst.State.NULL;
+            stop_after_current = false;
+            resume_position = 0;
             if (pipeline != null) pipeline.set_state (Gst.State.NULL);
             loaded_uri = null;
+            loaded_entry = null;
             state = Gst.State.NULL;
             changed ();
         }
@@ -73,6 +117,7 @@ namespace Music {
         public void previous () { if (queue.previous ()) { stop (); play (); } }
         public void shutdown () {
             stop ();
+            queue.current_removed.disconnect (removed_current);
             if (watch != 0) { Source.remove (watch); watch = 0; }
         }
         public bool seek (double seconds) {
